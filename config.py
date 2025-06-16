@@ -9,6 +9,6 @@ MINIMUM_SCANNING_TIMES = 10
 REAL_WIDTH = 316.33
 
 # LDPL mode
-LDPL_MODE = 'default'
+LDPL_MODE = 'jd'
 
 JD_MODE = False

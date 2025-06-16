@@ -134,7 +134,7 @@ def merge_yaw_step(yaws, step_counts, stride=0.5):
             yaw = yaws[j, 1]
             # next_waypoint[1] += avg_stride * np.sin(yaw) 
             # next_waypoint[2] += avg_stride * np.cos(yaw)
-            tmp_waypoint = [yaws[j, 0], next_waypoint[1] + avg_stride * np.cos(yaw), next_waypoint[2] + avg_stride * np.sin(yaw)]
+            tmp_waypoint = [yaws[j, 0], next_waypoint[1] - avg_stride * np.cos(yaw), next_waypoint[2] - avg_stride * np.sin(yaw)]
             # print(end_step_count - start_step_count, end_yaw_index - start_yaw_index, avg_stride, next_waypoint)
             waypoints.append(tmp_waypoint)
             next_waypoint = waypoints[-1]
@@ -368,14 +368,14 @@ def read_file_with_step_detector(dir_path, ap_unions, AP_dist_count, AP_dist, AP
     positions[:, 0] = step  # Set timestamps
     
     curr_x, curr_y = 0, 0
-    stride_length = 0.45  # Average stride length in meters
+    stride_length = 0.5  # Average stride length in meters
     for i in range(len(step)):
         yaw_angle = float(euler[i, 1])
         yaw = yaw_angle * np.pi / 180.0
         dx = stride_length * np.cos(yaw)
         dy = stride_length * np.sin(yaw)
-        curr_x += dx
-        curr_y += dy
+        curr_x -= dx
+        curr_y -= dy
         positions[i, 1] = curr_x
         positions[i, 2] = curr_y
     valid_mask = ~np.isnan(positions).any(axis=1)
@@ -495,13 +495,13 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
     positions[:, 0] = step
     
     curr_x, curr_y = 0, 0
-    stride_length = 0.6
+    stride_length = 0.5
     for i in range(len(step)):
         yaw = float(euler[i, 1]) * np.pi / 180.0
         dx = stride_length * np.cos(yaw)
         dy = stride_length * np.sin(yaw)
-        curr_x += dx
-        curr_y += dy
+        curr_x -= dx
+        curr_y -= dy
         positions[i, 1:] = [curr_x, curr_y]
         
     valid_mask = ~np.isnan(positions).any(axis=1)
@@ -511,7 +511,7 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
     # Build consecutive step pairs dataset
     wifi_inputs = []
     distance_labels = []
-    farthest_points = []  # New list to store farthest point coordinates
+
 
     pos_range = norm_params['pos_range']
     pos_min = norm_params['pos_min']
@@ -527,37 +527,16 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
             wp2_pos = (wp2 - pos_min) / pos_range
             # dist = np.sqrt(np.sum((wp1_pos - wp2_pos)**2))
             dist_vector = wp2_pos - wp1_pos
-            
-            # Find farthest point
-            farthest_dist = 0
-            farthest_point = None
-            # Convert waypoints to numpy array for vectorized operations
-            wp_array = np.array(waypoints)
-            wp_pos_array = (wp_array - pos_min) / pos_range
-            
-            # Calculate distances to all points except current point
-            mask = np.arange(len(waypoints)) != i
-            dists = np.sqrt(np.sum((wp_pos_array[mask] - wp1_pos)**2, axis=1))
-            
-            # Find farthest point
-            farthest_idx = np.argmax(dists)
-            farthest_dist = dists[farthest_idx]
-            farthest_point = wp_array[mask][farthest_idx]
-            farthest_wifi = wifi_records_coor[tuple(farthest_point)]
-            
 
             # Get wifi readings for farthest point
             # Convert wifi readings to tensors
             union_num = len(set(ap_unions.values()))
             wifi1_tensor = torch.zeros(union_num)
             wifi2_tensor = torch.zeros(union_num)
-            farthest_tensor = torch.zeros(union_num)
 
-            assert farthest_point is not None
             # Handle multiple BSSIDs mapping to same union by taking mean RSSI
             union_to_rssis1 = {}
             union_to_rssis2 = {}
-            union_to_rssis_far = {}
             
             # First wifi scan - collect all RSSIs per union
             for bssid, rssi, _ in wifi1:
@@ -576,13 +555,6 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
                     union_to_rssis2[union_idx].append(rssi)
 
             
-            # Collect RSSIs per union for farthest point
-            for bssid, rssi, _ in farthest_wifi:
-                if bssid in ap_unions:
-                    union_idx = ap_unions[bssid]
-                    if union_idx not in union_to_rssis_far:
-                        union_to_rssis_far[union_idx] = []
-                    union_to_rssis_far[union_idx].append(rssi)
                     
                     
             # Fill tensors with mean RSSI values
@@ -595,25 +567,18 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
                 mean_rssi = np.mean(rssis)
                 band = '5G' if any(b[2] == '5G' for b in wifi2 if b[0] in ap_unions and ap_unions[b[0]] == union_idx) else '2.4G'
                 wifi2_tensor[union_idx] = 1 / (1 + LDPL(mean_rssi, band=band, mode=LDPL_MODE))
-
-            for union_idx, rssis in union_to_rssis_far.items():
-                mean_rssi = np.mean(rssis)
-                band = '5G' if any(b[2] == '5G' for b in farthest_wifi if b[0] in ap_unions and ap_unions[b[0]] == union_idx) else '2.4G'
-                farthest_tensor[union_idx] = 1 / (1 + LDPL(mean_rssi, band=band, mode=LDPL_MODE))
             
             
             # Normalize tensors
             wifi1_tensor = wifi1_tensor / wifi1_tensor.sum() if wifi1_tensor.sum() > 0 else wifi1_tensor
             wifi2_tensor = wifi2_tensor / wifi2_tensor.sum() if wifi2_tensor.sum() > 0 else wifi2_tensor
-            farthest_tensor = farthest_tensor / farthest_tensor.sum() if farthest_tensor.sum() > 0 else farthest_tensor
             
-            wifi_inputs.append((wifi1_tensor, wifi2_tensor, farthest_tensor))
+            wifi_inputs.append((wifi1_tensor, wifi2_tensor))
             distance_labels.append(dist_vector)
-            farthest_points.append(farthest_point)  # Save farthest point coordinates
+
     
-    
-    logger.info(f"Saved {len(wifi_inputs)} wifi input pairs, distance labels, and farthest points")
-    return wifi_inputs, distance_labels, farthest_points, waypoints
+    logger.info(f"Saved {len(wifi_inputs)} wifi input pairs, distance labels")
+    return wifi_inputs, distance_labels, waypoints
 
 @log_execution_time
 def process_directory_for_steps(dir_path, ap_unions, norm_params, verbose=False):
@@ -645,7 +610,7 @@ def process_directory_for_steps(dir_path, ap_unions, norm_params, verbose=False)
         
         # Process each subdirectory and collect the data
         try:
-            subdir_wifi_inputs, subdir_distance_labels, subdir_farthest_points, subdir_waypoints = build_consecutive_step_dataset(
+            subdir_wifi_inputs, subdir_distance_labels, subdir_waypoints = build_consecutive_step_dataset(
                 subdir_path, ap_unions, norm_params, verbose=verbose
             )
         except Exception as e:
@@ -653,12 +618,11 @@ def process_directory_for_steps(dir_path, ap_unions, norm_params, verbose=False)
             continue
         wifi_inputs.extend(subdir_wifi_inputs)
         distance_labels.extend(subdir_distance_labels)
-        farthest_points.extend(subdir_farthest_points)
         waypoints.extend(subdir_waypoints)
         id_mask.extend([trace_id] * len(subdir_wifi_inputs))
         trace_id_map[trace_id] = subdir
     # Convert lists to numpy arrays
-    wifi_inputs_np = np.array([(w1.numpy(), w2.numpy(), w3.numpy()) for w1, w2, w3 in wifi_inputs], dtype=np.float32)
+    wifi_inputs_np = np.array([(w1.numpy(), w2.numpy()) for w1, w2 in wifi_inputs], dtype=np.float32)
     distance_labels_np = np.array(distance_labels, dtype=np.float32)
     # farthest_points_np = np.array(farthest_points, dtype=np.float32)
     waypoints_np = np.array([np.array(waypoint) for waypoint in waypoints], dtype=np.float32)
@@ -972,14 +936,14 @@ if __name__ == "__main__":
     with open(sampling_counter_path, 'w') as f:
         json.dump(sampling_counter_dict, f, indent=4)
     
-    ap_unions = process_all("data/HKUST_2F/unlabeled")
-    training_coors = process_waypoints(is_training=True, data_path="data/HKUST_2F/train")
-    testing_coors = process_waypoints(is_training=False, data_path="data/HKUST_2F/test")
+    ap_unions = process_all("data/JD_langfang_high/unlabeled")
+    training_coors = process_waypoints(is_training=True, data_path="data/JD_langfang_high/train")
+    testing_coors = process_waypoints(is_training=False, data_path="data/JD_langfang_high/test")
     training_pos_range = torch.max(training_coors, dim=0)[0] - torch.min(training_coors, dim=0)[0]
     # training_pos_range = torch.tensor([20.6, 81])
     training_pos_min = torch.min(training_coors, dim=0)[0]
     # training_pos_min = torch.tensor([8.4, -33])
-    process_directory_for_steps("data/HKUST_2F/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
+    process_directory_for_steps("data/JD_langfang_high/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
     end_time = time.time()
     total_time = end_time - start_time
     logger.info(f"Total execution time: {total_time:.2f} seconds")

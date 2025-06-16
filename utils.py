@@ -58,6 +58,7 @@ def LDPL(rssi, band='5G', r0_5g=32, r0_2g=38, n_5g=2.2, n_2g=2, mode='default'):
     elif mode == 'jd':
         if band == '5G':
             return np.power(10, (-rssi - 21) / 33)
+            
         else:  # 2.4G
             return np.power(10, (-rssi - 27) / 33)
 

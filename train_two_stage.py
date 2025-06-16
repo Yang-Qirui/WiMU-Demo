@@ -113,7 +113,7 @@ def pre_train(args):
         
         # Initialize dictionaries to store current epoch predictions
         for batch_inputs, batch_labels, batch_id_mask in tqdm(train_loader, desc=f"Pre-training Epoch {epoch}"):
-            inputs1, inputs2, inputs3 = batch_inputs[:, 0], batch_inputs[:, 1], batch_inputs[:, 2]
+            inputs1, inputs2 = batch_inputs[:, 0], batch_inputs[:, 1]
             optimizer.zero_grad()
             
             # Get embeddings and predictions
@@ -168,7 +168,7 @@ def pre_train(args):
         
         with torch.no_grad():
             for batch_inputs, batch_labels, batch_id_mask in val_loader:
-                inputs1, inputs2, inputs3 = batch_inputs[:, 0], batch_inputs[:, 1], batch_inputs[:, 2]
+                inputs1, inputs2 = batch_inputs[:, 0], batch_inputs[:, 1]
                 prediction_1, recon_A = model(graph_dataset, inputs1)
                 prediction_2, _ = model(graph_dataset, inputs2)
                 
@@ -417,7 +417,8 @@ def fine_tune(args):
             for i in range(len(delta_coors)):
                 _err = delta_coors[i].pow(2).sum().sqrt()
                 train_errors.append(_err.item())            # Combined loss
-            loss = alpha * loc_loss # + l1_reg
+            loss = alpha * loc_loss + recon_loss # + l1_reg
+            
             # print(f"loss: {loss.item()}, recon_loss: {recon_loss.item()}, loc_loss: {loc_loss.item()}, l1_reg: {l1_reg.item()}")
             # Backward pass
             loss.backward()
