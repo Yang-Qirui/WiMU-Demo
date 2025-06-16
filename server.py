@@ -191,7 +191,7 @@ def reset():
 def sendimu():
     logging.debug("=" * os.get_terminal_size().columns)
     data = request.json
-    print(f"IMU: {data}")
+    # print(f"IMU: {data}")
     step_data.push((data['timestamp'], data['yaw'], data['stride']))
     return jsonify({"success": True})
 
@@ -216,7 +216,7 @@ def inference2():
         elif abs(closest_data[0][0] - timestamp) > 1000: #距离上一次收到IMU数据时间过长，说明位置没有移动
             return jsonify({"x": last_loc[1], "y": last_loc[2]})
         else:
-            # print(step_data.get_all())
+            print(step_data.get_all())
             print(f"last_loc: {last_loc}")
             last_ts = last_loc[0]
             last_loc_index = step_data.find_closest(last_ts, key_func=lambda x: x[0])[2]
@@ -232,6 +232,7 @@ def inference2():
                 stride = step_data.get(cnt)[2]
                 dx -= stride * math.cos(yaw)
                 dy -= stride * math.sin(yaw)
+            print(f"dx: {dx}, dy: {dy}")
             pf.update(
                 observation=(predict[0], predict[1]), 
                 system_input=(dx, dy), 

@@ -82,7 +82,7 @@ def pre_train(args):
     
     # Initialize models
     gnn = GAE(GCNEncoder(args.fp_dim, args.fp_dim), MLPDecoder(args.fp_dim)).to(device)
-    mlp = MyMLP(args.fp_dim, 2).float().to(device)  # Output is distance
+    mlp = MyMLP(args.fp_dim, 2).float().to(device)  # Output is 2D coordinates
     model = JointModel(gnn, mlp).to(device)
     
     # Optimizer and scheduler
@@ -113,43 +113,31 @@ def pre_train(args):
         
         # Initialize dictionaries to store current epoch predictions
         for batch_inputs, batch_labels, batch_id_mask in tqdm(train_loader, desc=f"Pre-training Epoch {epoch}"):
-            inputs1, inputs2, inputs3 = batch_inputs[:, 0], batch_inputs[:, 1], batch_inputs[:, 2]
+            inputs1, inputs2 = batch_inputs[:, 0], batch_inputs[:, 1]  # 现在只有两个输入
             optimizer.zero_grad()
             
             # Get embeddings and predictions
             prediction_1, recon_A = model(graph_dataset, inputs1)
             prediction_2, _ = model(graph_dataset, inputs2)
             
-            # # Get embeddings for contrastive learning
-            # emb1 = model.gen_emb(graph_dataset, inputs1)
-            # emb2 = model.gen_emb(graph_dataset, inputs2)
-            # emb1_norm = torch.nn.functional.normalize(emb1.squeeze(-1), p=2, dim=1)
-            # emb2_norm = torch.nn.functional.normalize(emb2.squeeze(-1), p=2, dim=1)
-            # similarity = torch.sum(emb1_norm * emb2_norm, dim=1)
-            # sim_mean = torch.mean(similarity)
-            # dist_mean = torch.mean(batch_labels)
-            # sim_centered = similarity - sim_mean
-            # dist_centered = batch_labels - dist_mean
-
-            # predict_dist = torch.sqrt(torch.sum((prediction_1 - prediction_2) ** 2, dim=1))
-            predict_dist_vector = prediction_2 - prediction_1
-            dist_loss = loss_fn(predict_dist_vector, batch_labels)
-            recon_loss = recon_loss_fn(recon_A, A)
-            
-            # Add L1 regularization
-            # l1_reg = compute_l1_regularization(model, l1_lambda=args.l1_lambda)
-            
-            # contrast_loss = mutual_info_loss(sim_centered, dist_centered)
-            loss = args.beta * dist_loss + recon_loss # + l1_reg # + contrast_loss
-            # print(f"loss: {loss.item()}, recon_loss: {recon_loss.item()}, dist_loss: {dist_loss.item()}, l1_reg: {l1_reg.item()}")
-            
-            loss.backward()
-            optimizer.step()
-            
-            train_epoch_loss += loss.item()
-            train_recon_loss += recon_loss.item()
-            train_dist_loss += dist_loss.item()
-            # train_l1_loss += l1_reg.item()
+            # 计算欧氏距离
+            predict_dist = torch.sqrt(torch.sum((prediction_2 - prediction_1) ** 2, dim=1))
+            dist_loss = loss_fn(predict_dist, batch_labels)
+            try:
+                recon_loss = recon_loss_fn(recon_A, A)
+                print(f"recon_loss: {recon_loss.item()}, dist_loss: {dist_loss.item()}")
+                loss = args.beta * dist_loss + recon_loss
+                
+                loss.backward()
+                optimizer.step()
+                
+                train_epoch_loss += loss.item()
+                train_recon_loss += recon_loss.item()
+                train_dist_loss += dist_loss.item()
+            except:
+                print(recon_A.cpu().detach().numpy())
+                print(np.isnan(recon_A.cpu().detach().numpy()).sum())
+                raise ValueError("Recon loss error")
         
         train_epoch_loss /= len(train_loader)
         train_recon_loss /= len(train_loader)
@@ -168,41 +156,23 @@ def pre_train(args):
         
         with torch.no_grad():
             for batch_inputs, batch_labels, batch_id_mask in val_loader:
-                inputs1, inputs2, inputs3 = batch_inputs[:, 0], batch_inputs[:, 1], batch_inputs[:, 2]
+                inputs1, inputs2 = batch_inputs[:, 0], batch_inputs[:, 1]  # 现在只有两个输入
                 prediction_1, recon_A = model(graph_dataset, inputs1)
                 prediction_2, _ = model(graph_dataset, inputs2)
                 
-                # emb1 = model.gen_emb(graph_dataset, inputs1)
-                # emb2 = model.gen_emb(graph_dataset, inputs2)
-                # emb3 = model.gen_emb(graph_dataset, inputs3)
-                # Get embeddings for contrastive learning
+                # 计算欧氏距离
+                predict_dist = torch.sqrt(torch.sum((prediction_2 - prediction_1) ** 2, dim=1))
+                dist_loss = loss_fn(predict_dist, batch_labels)
+                try:
+                    recon_loss = recon_loss_fn(recon_A, A)
+                except:
+                    print(recon_A, np.isnan(recon_A).sum())
+                    raise ValueError("Recon loss error")
                 
-                # Calculate similarity between embeddings using cosine similarity
-                # emb1_norm = torch.nn.functional.normalize(emb1.squeeze(-1), p=2, dim=1)
-                # emb2_norm = torch.nn.functional.normalize(emb2.squeeze(-1), p=2, dim=1)
-                # similarity = torch.sum(emb1_norm * emb2_norm, dim=1)
-                # sim_mean = torch.mean(similarity)
-                # dist_mean = torch.mean(batch_labels)
-                # sim_centered = similarity - sim_mean
-                # dist_centered = batch_labels - dist_mean
-                # sim_centered_divide = sim_centered / torch.std(sim_centered)
-                # dist_centered_divide = dist_centered / torch.std(dist_centered)
-                # corr = torch.mean(sim_centered_divide * dist_centered_divide)
-
-                # predict_dist = torch.sqrt(torch.sum((prediction_1 - prediction_2) ** 2, dim=1))
-                predict_dist_vector = prediction_2 - prediction_1
-                dist_loss = loss_fn(predict_dist_vector, batch_labels)
-                recon_loss = recon_loss_fn(recon_A, A)
-                
-                # Add L1 regularization
-                # l1_reg = compute_l1_regularization(model, l1_lambda=args.l1_lambda)
-                
-                # contrast_loss = mutual_info_loss(sim_centered, dist_centered)
-                loss = args.beta * dist_loss + recon_loss # + l1_reg # + contrast_loss  
+                loss = args.beta * dist_loss + recon_loss
                 val_epoch_loss += loss.item()
                 val_recon_loss += recon_loss.item()
                 val_dist_loss += dist_loss.item()
-                # val_l1_loss += l1_reg.item()
         
         val_epoch_loss /= len(val_loader)
         val_recon_loss /= len(val_loader)
@@ -212,19 +182,7 @@ def pre_train(args):
         val_dist_losses.append(val_dist_loss)
         val_l1_losses.append(val_l1_loss)
         
-        # if val_epoch_loss < best_val_loss:
-        #     best_val_loss = val_epoch_loss
-        #     best_predictions = current_predictions
-            
-        #     # Plot predictions
-        #     for id_val in best_predictions.keys():
-        #         preds = np.array(best_predictions[id_val])
-        #         plt.figure(figsize=(15, 10))
-        #         plt.scatter(preds[:, 0], preds[:, 1], label=f'ID {id_val} - Predictions', alpha=0.6)
-        #         plt.title(f'ID {id_val}')
-        #         plt.savefig(f'output/pre_train_plots/best_predictions_epoch_{id_val}.png')
-        #         plt.close()
-        # # Early stopping check
+        # Early stopping check
         if val_epoch_loss < best_val_loss:
             best_val_loss = val_epoch_loss
             patience_counter = 0
@@ -246,23 +204,6 @@ def pre_train(args):
     # Plot training curves
     plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses, val_dist_losses, train_l1_losses, val_l1_losses)
     print(f"Pre-training completed. Best model saved to ./{args.save_dir}/pre_trained_model.pt")
-
-# def compute_l1_regularization(model, l1_lambda=1e-5):
-#     """
-#     Compute L1 regularization loss for the model parameters
-    
-#     Args:
-#         model: PyTorch model
-#         l1_lambda: L1 regularization strength
-    
-#     Returns:
-#         L1 regularization loss
-#     """
-#     l1_reg = torch.tensor(0., device=next(model.parameters()).device)
-#     for param in model.parameters():
-#         if param.requires_grad:
-#             l1_reg += torch.norm(param, 1)
-#     return l1_lambda * l1_reg
 
 def load_json_data(data_path, device, A_shape):
     """
@@ -612,7 +553,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--save_dir", help="save directory", default="output", type=str)
     arg_parser.add_argument("--l1_lambda", help="L1 regularization strength", default=1e-5, type=float)
     arg_parser.add_argument("--alpha", help="alpha for location loss", default=10, type=float)
-    arg_parser.add_argument("--beta", help="beta for relative localization loss", default=1, type=float)
+    arg_parser.add_argument("--beta", help="beta for relative localization loss", default=0.1, type=float)
 
     args = arg_parser.parse_args()
     os.makedirs(f"./{args.save_dir}", exist_ok=True)
