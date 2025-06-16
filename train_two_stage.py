@@ -13,16 +13,18 @@ import ast
 import matplotlib.pyplot as plt
 from torch.nn import TripletMarginLoss
 from collections import defaultdict
+from config import LDPL_MODE
 
 def pre_train(args):
     
     # Initialize lists to store losses for plotting
     train_recon_losses = []
     train_dist_losses = []
-    train_contrast_losses = []
+    train_l1_losses = []
+
     val_recon_losses = []
     val_dist_losses = []
-    val_contrast_losses = []
+    val_l1_losses = []
     
     # Create output directories if they don't exist
     os.makedirs("output/pre_train_plots", exist_ok=True)
@@ -48,7 +50,7 @@ def pre_train(args):
     graph_dataset = Data(x, edge_index.T, edge_attr)
     
     # Save graph dataset for both pre-training and fine-tuning
-    torch.save(graph_dataset, "./output/graph_dataset.pt")
+    torch.save(graph_dataset, f"./{args.save_dir}/graph_dataset.pt")
     
     # Load pre-training data
     wifi_inputs = np.load("./data/pre_training/wifi_inputs.npy")
@@ -107,12 +109,9 @@ def pre_train(args):
         train_epoch_loss = 0
         train_recon_loss = 0
         train_dist_loss = 0
-        train_contrast_loss = 0
+        train_l1_loss = 0
         
         # Initialize dictionaries to store current epoch predictions
-        current_predictions = defaultdict(list)
-        
-        processed_inputs = set()  # Track processed inputs
         for batch_inputs, batch_labels, batch_id_mask in tqdm(train_loader, desc=f"Pre-training Epoch {epoch}"):
             inputs1, inputs2, inputs3 = batch_inputs[:, 0], batch_inputs[:, 1], batch_inputs[:, 2]
             optimizer.zero_grad()
@@ -137,8 +136,12 @@ def pre_train(args):
             dist_loss = loss_fn(predict_dist_vector, batch_labels)
             recon_loss = recon_loss_fn(recon_A, A)
             
+            # Add L1 regularization
+            # l1_reg = compute_l1_regularization(model, l1_lambda=args.l1_lambda)
+            
             # contrast_loss = mutual_info_loss(sim_centered, dist_centered)
-            loss = 1 * dist_loss + recon_loss # + contrast_loss
+            loss = args.beta * dist_loss + recon_loss # + l1_reg # + contrast_loss
+            # print(f"loss: {loss.item()}, recon_loss: {recon_loss.item()}, dist_loss: {dist_loss.item()}, l1_reg: {l1_reg.item()}")
             
             loss.backward()
             optimizer.step()
@@ -146,29 +149,22 @@ def pre_train(args):
             train_epoch_loss += loss.item()
             train_recon_loss += recon_loss.item()
             train_dist_loss += dist_loss.item()
-            # train_contrast_loss += contrast_loss.item()
-            
-            # Store predictions and ground truth by ID
-            for i, id_val in enumerate(batch_id_mask):
-                input_key = tuple(inputs1[i].detach().cpu().numpy())  # Convert to tuple for hashing
-                if input_key not in processed_inputs:
-                    current_predictions[id_val.item()].append(prediction_1[i].detach().cpu().numpy())
-                    processed_inputs.add(input_key)
+            # train_l1_loss += l1_reg.item()
         
         train_epoch_loss /= len(train_loader)
         train_recon_loss /= len(train_loader)
         train_dist_loss /= len(train_loader)
-        train_contrast_loss /= len(train_loader)
+        train_l1_loss /= len(train_loader)
         train_recon_losses.append(train_recon_loss)
         train_dist_losses.append(train_dist_loss)
-        train_contrast_losses.append(train_contrast_loss)
+        train_l1_losses.append(train_l1_loss)
         
         # Validation phase
         model.eval()
         val_epoch_loss = 0
         val_recon_loss = 0
         val_dist_loss = 0
-        val_contrast_loss = 0
+        val_l1_loss = 0
         
         with torch.no_grad():
             for batch_inputs, batch_labels, batch_id_mask in val_loader:
@@ -198,20 +194,23 @@ def pre_train(args):
                 dist_loss = loss_fn(predict_dist_vector, batch_labels)
                 recon_loss = recon_loss_fn(recon_A, A)
                 
+                # Add L1 regularization
+                # l1_reg = compute_l1_regularization(model, l1_lambda=args.l1_lambda)
+                
                 # contrast_loss = mutual_info_loss(sim_centered, dist_centered)
-                loss = 1 * dist_loss + recon_loss # + contrast_loss
+                loss = args.beta * dist_loss + recon_loss # + l1_reg # + contrast_loss  
                 val_epoch_loss += loss.item()
                 val_recon_loss += recon_loss.item()
                 val_dist_loss += dist_loss.item()
-                # val_contrast_loss += contrast_loss.item()
+                # val_l1_loss += l1_reg.item()
         
         val_epoch_loss /= len(val_loader)
         val_recon_loss /= len(val_loader)
         val_dist_loss /= len(val_loader)
-        val_contrast_loss /= len(val_loader)
+        val_l1_loss /= len(val_loader)
         val_recon_losses.append(val_recon_loss)
         val_dist_losses.append(val_dist_loss)
-        val_contrast_losses.append(val_contrast_loss)
+        val_l1_losses.append(val_l1_loss)
         
         # if val_epoch_loss < best_val_loss:
         #     best_val_loss = val_epoch_loss
@@ -232,6 +231,7 @@ def pre_train(args):
             plot_adjacency_matrices(A, recon_A)
             # Save best model
             torch.save(model.state_dict(), "output/pre_trained_model.pt")
+            
         else:
             patience_counter += 1
             if patience_counter >= patience:
@@ -240,12 +240,29 @@ def pre_train(args):
         
         if epoch % 10 == 0:
             print(f"Pre-train Epoch: {epoch}")
-            print(f"Train - Total Loss: {train_epoch_loss:.4f}, Recon Loss: {train_recon_loss:.4f}, Dist Loss: {train_dist_loss:.4f}, Contrast Loss: {train_contrast_loss:.4f}")
-            print(f"Val - Total Loss: {val_epoch_loss:.4f}, Recon Loss: {val_recon_loss:.4f}, Dist Loss: {val_dist_loss:.4f}, Contrast Loss: {val_contrast_loss:.4f}")
+            print(f"Train - Total Loss: {train_epoch_loss:.4f}, Recon Loss: {train_recon_loss:.4f}, Dist Loss: {train_dist_loss:.4f}, l1 regularization: {train_l1_loss:.4f}")
+            print(f"Val - Total Loss: {val_epoch_loss:.4f}, Recon Loss: {val_recon_loss:.4f}, Dist Loss: {val_dist_loss:.4f}, l1 regularization: {val_l1_loss:.4f}")
         scheduler.step()
     # Plot training curves
-    plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses, val_dist_losses, train_contrast_losses, val_contrast_losses)
-    print("Pre-training completed. Best model saved to output/pre_trained_model.pt")
+    plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses, val_dist_losses, train_l1_losses, val_l1_losses)
+    print(f"Pre-training completed. Best model saved to ./{args.save_dir}/pre_trained_model.pt")
+
+# def compute_l1_regularization(model, l1_lambda=1e-5):
+#     """
+#     Compute L1 regularization loss for the model parameters
+    
+#     Args:
+#         model: PyTorch model
+#         l1_lambda: L1 regularization strength
+    
+#     Returns:
+#         L1 regularization loss
+#     """
+#     l1_reg = torch.tensor(0., device=next(model.parameters()).device)
+#     for param in model.parameters():
+#         if param.requires_grad:
+#             l1_reg += torch.norm(param, 1)
+#     return l1_lambda * l1_reg
 
 def load_json_data(data_path, device, A_shape):
     """
@@ -273,11 +290,8 @@ def load_json_data(data_path, device, A_shape):
                 # Separate 2.4G and 5G signals
                 weights = torch.zeros((A_shape,))
                 
-                for bssid, (rssi, band) in wifi_records.items():
-                    if band == '2.4G':
-                        weights[int(bssid)] = 1 / (1 + LDPL(rssi, band='2.4G'))
-                    elif band == '5G':
-                        weights[int(bssid)] = 1 / (1 + LDPL(rssi, band='5G'))
+                for bssid, (rssi, band) in wifi_records.items():    
+                    weights[int(bssid)] = 1 / (1 + LDPL(rssi, band=band, mode=LDPL_MODE))
                 
                 weights /= weights.sum()
                 rp_weights.append(weights)
@@ -300,13 +314,13 @@ def fine_tune(args):
     test_errors = []
     
     # Create output directories if they don't exist
-    os.makedirs("output/fine_tune_plots", exist_ok=True)
+    os.makedirs(f"./output/fine_tune_plots", exist_ok=True)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # Load the same graph dataset used in pre-training
-    graph_dataset = torch.load("./output/graph_dataset.pt").to(device)
-    A = torch.load("./output/adjacency/original_adj.pt").to(device)
+    graph_dataset = torch.load(f"./{args.save_dir}/graph_dataset.pt", weights_only=False).to(device)
+    A = torch.load(f"./output/adjacency/original_adj.pt", weights_only=False).to(device)
     
     # Initialize models
     gnn = GAE(GCNEncoder(args.fp_dim, args.fp_dim), MLPDecoder(args.fp_dim)).to(device)
@@ -314,9 +328,9 @@ def fine_tune(args):
     model = JointModel(gnn, mlp).to(device)
     
     # Load pre-trained weights
-    if os.path.exists("output/pre_trained_model.pt"):
+    if os.path.exists(f"./{args.save_dir}/pre_trained_model.pt"):
         print("Loading pre-trained model...")
-        model.load_state_dict(torch.load("output/pre_trained_model.pt"))
+        model.load_state_dict(torch.load(f"./{args.save_dir}/pre_trained_model.pt", weights_only=False))
     else:
         print("Warning: Pre-trained model not found. Starting from scratch.")
     
@@ -352,7 +366,7 @@ def fine_tune(args):
     torch.save({
         'pos_range': rp_pos_range,
         'pos_min': rp_pos_min
-    }, './output/norm_params.pt')
+    }, f"./{args.save_dir}/norm_params.pt")
     
     # Normalize coordinates
     train_coors_tensor = (train_coors_tensor - rp_pos_min) / rp_pos_range
@@ -369,11 +383,13 @@ def fine_tune(args):
     print("Starting fine-tuning...")
     min_test_err = np.inf
     test_std = np.inf
+    train_std = np.inf
     alpha = 10
     
     for e in range(args.fine_tune_epoch):
         model.train()
         train_epoch_loss = 0
+        train_errors = []
         
         for _train_rp_coors, _train_rp_weights, _train_pos_weights, _train_neg_weights in tqdm(train_loader, desc=f"Fine-tuning Epoch {e}"):
             optimizer.zero_grad()
@@ -385,31 +401,38 @@ def fine_tune(args):
             predict_coors, recon_A = model(graph_dataset, _train_rp_weights)
             
             # Compute losses
-            anchor = model.gen_emb(graph_dataset, _train_rp_weights)
-            positive = model.gen_emb(graph_dataset, _train_pos_weights)
-            negative = model.gen_emb(graph_dataset, _train_neg_weights)
+            # anchor = model.gen_emb(graph_dataset, _train_rp_weights)
+            # positive = model.gen_emb(graph_dataset, _train_pos_weights)
+            # negative = model.gen_emb(graph_dataset, _train_neg_weights)
             
-            triplet_loss = contrast_fn(anchor, positive, negative)
+            # triplet_loss = contrast_fn(anchor, positive, negative)
             recon_loss = recon_loss_fn(recon_A, A)
             loc_loss = loss_fn(predict_coors, _train_rp_coors)
             
-            # Combined loss
-            loss = recon_loss + alpha * loc_loss
+            # Add L1 regularization
+            # l1_reg = compute_l1_regularization(model, l1_lambda=args.l1_lambda)
             
+            # Calculate standard deviation of location errors during training
+            delta_coors = (_train_rp_coors - predict_coors) * rp_pos_range
+            for i in range(len(delta_coors)):
+                _err = delta_coors[i].pow(2).sum().sqrt()
+                train_errors.append(_err.item())            # Combined loss
+            loss = alpha * loc_loss # + l1_reg
+            # print(f"loss: {loss.item()}, recon_loss: {recon_loss.item()}, loc_loss: {loc_loss.item()}, l1_reg: {l1_reg.item()}")
             # Backward pass
             loss.backward()
             optimizer.step()
             
             train_epoch_loss += loss.item()
-        
         scheduler.step()
+        train_std = np.std(train_errors)
         train_epoch_loss /= len(train_loader)
         train_losses.append(train_epoch_loss)
         
         # Evaluation
         model.eval()
         test_result = {}
-        x_err, y_err, err_std = [], [], []
+        x_err, y_err, test_err_std = [], [], []
         test_epoch_error = 0
         
         with torch.no_grad():
@@ -424,8 +447,8 @@ def fine_tune(args):
                     x_err.append(delta_coors[i][0].item())
                     y_err.append(delta_coors[i][1].item())
                     test_epoch_error += _err.item()
-                    err_std.append(_err.item())
-        
+                    test_err_std.append(_err.item())
+            test_std = np.std(test_err_std)
         test_epoch_error /= len(test_loader.dataset)
         test_errors.append(test_epoch_error)
         
@@ -434,17 +457,33 @@ def fine_tune(args):
             test_result["x_err_std"] = np.std(x_err)
             test_result["y_err_std"] = np.std(y_err)
             
-            with open("./output/fine_tuned_test_result.json", 'w') as f:
+            with open(f"./output/fine_tuned_test_result.json", 'w') as f:
                 json.dump(test_result, f)
-            
             min_test_err = test_epoch_error
-            test_std = np.std(err_std)
-            torch.save(model.state_dict(), "output/fine_tuned_model.pt")
+            
+            # Compute and save embeddings for training and test sets
+            # print("Computing embeddings for best fine-tuned model...")
+            
+            # # Create simple data loaders for embedding computation (without contrastive sampling)
+            # train_simple_dataset = TensorDataset(train_rp_weights, train_coors_tensor, torch.zeros(len(train_rp_weights)))
+            # train_simple_loader = DataLoader(train_simple_dataset, batch_size=args.batch_size, shuffle=False)
+            
+            # # Compute embeddings
+            # compute_and_save_embeddings(
+            #     model, graph_dataset, train_simple_loader,
+            #     f"output/embeddings/finetune_train_embeddings.npz",
+            #     "finetune_train", device
+            # )
+            # compute_and_save_embeddings(
+            #     model, graph_dataset, test_loader,
+            #     f"output/embeddings/finetune_test_embeddings.npz", 
+            #     "finetune_test", device
+            # )
         
         if e % 10 == 0:
-            print(f"Fine-tune Epoch: {e}, Train Loss: {train_epoch_loss:.4f}, Test Error: {test_epoch_error:.4f}")
+            print(f"Fine-tune Epoch: {e}, Train Loss: {train_epoch_loss:.4f}, Test Error: {test_epoch_error:.4f}, Train Std: {train_std:.4f}, Test Std: {test_std:.4f}")
     
-    print(f"Fine-tuning completed. Best test error (MAE): {min_test_err:.4f}, Test Error Std: {test_std:.4f}")
+    print(f"Fine-tuning completed. Best test error (MAE): {min_test_err:.4f}, Test Error Std: {test_std:.4f}, Train Std: {train_std:.4f}")
     plot_fine_tune_losses(train_losses, test_errors)
 
 def grid_search(param_grid):
@@ -475,7 +514,7 @@ def grid_search(param_grid):
             fine_tune(args)
             
             # Load test results to get error
-            with open("./output/fine_tuned_test_result.json", 'r') as f:
+            with open(f"./output/fine_tuned_test_result.json", 'r') as f:
                 results = json.load(f)
             
             # Calculate mean error excluding std values
@@ -487,11 +526,74 @@ def grid_search(param_grid):
                 best_error = mean_error
                 best_params = params.copy()
                 print(f"New best parameters found! Error: {best_error:.4f}")
-                json.dump(best_params, open("./params/best_params.json", 'w'))
+                json.dump(best_params, open(f"./output/best_params.json", 'w'))
         
         print("\nGrid search completed!")
         print("Best parameters:", best_params)
         print(f"Best error: {best_error:.4f}")
+
+def compute_and_save_embeddings(model, graph_dataset, data_loader, save_path, phase_name, device):
+    """
+    Compute embeddings for all samples in the dataset and save them.
+    
+    Args:
+        model: The trained model
+        graph_dataset: Graph data
+        data_loader: DataLoader containing the dataset
+        save_path: Path to save embeddings
+        phase_name: Name of the phase (e.g., 'train', 'test', 'val')
+        device: Device to run computation on
+    """
+    model.eval()
+    all_embeddings = []
+    all_coordinates = []
+    all_timestamps = []
+    
+    print(f"Computing embeddings for {phase_name} dataset...")
+    existing_coords = set()
+    with torch.no_grad():
+        for batch_data in tqdm(data_loader, desc=f"Computing {phase_name} embeddings"):
+            
+            # Fine-tuning data format
+            if len(batch_data) == 3:
+                # Format: (weights, coordinates, timestamps)
+                # Store samples for each coordinate label across batches
+                batch_weights, batch_coords, batch_timestamps = batch_data
+                
+                # For each sample in batch
+                for i in range(len(batch_coords)):
+                    # Use coordinate tuple as label
+                    coord_label = tuple(batch_coords[i].cpu().numpy())
+                
+                    # Only store first occurrence of each coordinate
+                    if coord_label not in existing_coords:
+                        all_coordinates.append(batch_coords[i].cpu())
+                        all_timestamps.append(batch_timestamps[i].cpu())
+                        all_embeddings.append(model.gen_emb(graph_dataset, batch_weights[i].to(device)).cpu())
+                        existing_coords.add(coord_label)
+        all_coordinates = torch.stack(all_coordinates, dim=0)
+        all_timestamps = torch.stack(all_timestamps, dim=0)
+        all_embeddings = torch.stack(all_embeddings, dim=0)  
+    
+    # Save embeddings and metadata
+    embeddings_data = {
+        'embeddings': all_embeddings.numpy(),
+        'coordinates': all_coordinates.numpy(),
+        'timestamps': all_timestamps.numpy(),
+        'phase': phase_name,
+        'num_samples': len(all_embeddings),
+        'embedding_dim': all_embeddings.shape[1] if len(all_embeddings.shape) > 1 else all_embeddings.shape[0]
+    }
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    # Save as both .pt and .npz for flexibility
+    torch.save(embeddings_data, save_path.replace('.npz', '.pt'))
+    np.savez(save_path, **embeddings_data)
+    
+    print(f"Saved {phase_name} embeddings: {all_embeddings.shape} to {save_path}")
+    return embeddings_data
 
 if __name__ == "__main__":
     torch.manual_seed(0)
@@ -507,8 +609,13 @@ if __name__ == "__main__":
     arg_parser.add_argument("--patience", help="patience for early stopping", default=20, type=int)
     arg_parser.add_argument("--pre_train", help="whether to pre-train", action="store_true")
     arg_parser.add_argument("--grid_search", help="whether to grid search", action="store_true")
+    arg_parser.add_argument("--save_dir", help="save directory", default="output", type=str)
+    arg_parser.add_argument("--l1_lambda", help="L1 regularization strength", default=1e-5, type=float)
+    arg_parser.add_argument("--alpha", help="alpha for location loss", default=10, type=float)
+    arg_parser.add_argument("--beta", help="beta for relative localization loss", default=1, type=float)
 
     args = arg_parser.parse_args()
+    os.makedirs(f"./{args.save_dir}", exist_ok=True)
     
     # Run pre-training
     if args.grid_search:
@@ -519,10 +626,9 @@ if __name__ == "__main__":
             'patience': [20, 30, 40, 50]
         }
         best_params = grid_search(param_grid)
-        json.dump(best_params, open("./params/best_params.json", 'w'))
+        json.dump(best_params, open(f"./{args.save_dir}/best_params.json", 'w'))
     else:
         if args.pre_train:
             pre_train(args)
         fine_tune(args) 
-
     

@@ -9,9 +9,36 @@ from PIL import Image
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def load_geojson(file_path, height, width):
+def load_geojson(file_path, ref_point1, ref_point2, ref_pixel1, ref_pixel2):
+    """
+    Load and convert GeoJSON coordinates from pixel to real-world coordinates using reference points.
+    
+    Args:
+        file_path (str): Path to the GeoJSON file
+        ref_point1 (tuple): First reference point in real-world coordinates (x, y)
+        ref_point2 (tuple): Second reference point in real-world coordinates (x, y)
+        ref_pixel1 (tuple): First reference point in pixel coordinates (x, y)
+        ref_pixel2 (tuple): Second reference point in pixel coordinates (x, y)
+        
+    Returns:
+        dict: Dictionary mapping area IDs to their polygons in real-world coordinates
+    """
     with open(file_path, 'r') as f:
         data = json.load(f)
+    
+    # Calculate scale factors using reference points
+    pixel_dx = ref_pixel2[0] - ref_pixel1[0]
+    pixel_dy = ref_pixel2[1] - ref_pixel1[1]
+    real_dx = ref_point2[0] - ref_point1[0]
+    real_dy = ref_point2[1] - ref_point1[1]
+    
+    x_scale = real_dx / pixel_dx
+    y_scale = real_dy / pixel_dy
+    
+    # Calculate offset
+    x_offset = ref_point1[0] - ref_pixel1[0] * x_scale
+    y_offset = ref_point1[1] - ref_pixel1[1] * y_scale
+    
     areas = {}
     for feature in data['features']:
         area_id = feature['properties']['id']
@@ -20,57 +47,66 @@ def load_geojson(file_path, height, width):
             polygons = []
             for poly_coords in geometry['coordinates']:
                 for ring in poly_coords:
-                    real_coords = [(x * REAL_WIDTH / width, y * REAL_WIDTH / height) for x, y in ring]
+                    # Convert pixel coordinates to real-world coordinates
+                    real_coords = []
+                    for x, y in ring:
+                        real_x = x * x_scale + x_offset
+                        real_y = y * y_scale + y_offset
+                        real_coords.append((real_x, real_y))
                     polygons.append(Polygon(real_coords))
             areas[area_id] = MultiPolygon(polygons)
         else:
-            real_coords = [(x * REAL_WIDTH / width, y * REAL_WIDTH / height) for x, y in geometry['coordinates'][0]]
+            # Convert pixel coordinates to real-world coordinates
+            real_coords = []
+            for x, y in geometry['coordinates'][0]:
+                real_x = x * x_scale + x_offset
+                real_y = y * y_scale + y_offset
+                real_coords.append((real_x, real_y))
             areas[area_id] = Polygon(real_coords)
     return areas
 
-def check_current_area(particles):
-    """
-    Check if each particle is exclusively in the target area.
+# def check_current_area(particles):
+#     """
+#     Check if each particle is exclusively in the target area.
     
-    Args:
-        particles: torch.Tensor of shape [N, 3] containing particle positions (x, y, weight)
+#     Args:
+#         particles: torch.Tensor of shape [N, 3] containing particle positions (x, y, weight)
         
-    Returns:
-        torch.Tensor of shape [N] containing 1 if particle is exclusively in target area, 0 otherwise
-    """
-    # Load all GeoJSON files
-
-
-    # rooms = load_geojson('geojsons/rooms.geojson')
-    # outdoor = load_geojson('geojsons/outdoor.geojson')
-    # stairs = load_geojson('geojsons/stairs.geojson')
-    shelf = load_geojson('geojsons/shelf.geojson')
-    target = load_geojson('geojsons/target.geojson')
+#     Returns:
+#         torch.Tensor of shape [N] containing 1 if particle is exclusively in target area, 0 otherwise
+#     """
+#     # Reference points in real-world coordinates (from target.geojson)
+#     ref_point1 = (9, -33)    # First point in real-world coordinates
+#     ref_point2 = (30, -33)   # Second point in real-world coordinates
     
-    # Convert particles to CPU and numpy for processing
-    particles_cpu = particles[:, :2].cpu().numpy()
+#     # Reference points in pixel coordinates (from target.geojson)
+#     ref_pixel1 = (539.914438502673647, -255.48663101604285)  # First point in pixel coordinates
+#     ref_pixel2 = (568.663101604277927, -255.48663101604285)  # Second point in pixel coordinates
     
-    # Initialize result tensor
-    is_in_target = torch.zeros(len(particles), device=device, dtype=torch.bool)
+#     # Load target and shelf areas
+#     # target = load_geojson('geojsons/JD_langfang_high/target.geojson', ref_point1, ref_point2, ref_pixel1, ref_pixel2)
+#     # shelf = load_geojson('geojsons/JD_langfang_high/shelf.geojson', ref_point1, ref_point2, ref_pixel1, ref_pixel2)
     
-    # Check each particle
-    for i, (x, y) in enumerate(particles_cpu):
-        point = Point(x, y)
+#     # Convert particles to CPU and numpy for processing
+#     particles_cpu = particles[:, :2].cpu().numpy()
+    
+#     # Initialize result tensor
+#     is_in_target = torch.zeros(len(particles), device=device, dtype=torch.bool)
+    
+#     # Check each particle
+#     for i, (x, y) in enumerate(particles_cpu):
+#         point = Point(x, y)
         
-        # Check if point is in target area
-        in_target = any(polygon.contains(point) for polygon in target.values())
+#         # Check if point is in target area
+#         # in_target = any(polygon.contains(point) for polygon in target.values())
         
-        # Check if point is in any other area
-        in_other = False
-        for area_dict in shelf:
-            if any(polygon.contains(point) for polygon in area_dict.values()):
-                in_other = True
-                break
+#         # Check if point is in any shelf area
+#         in_shelf = any(polygon.contains(point) for polygon in shelf.values())
         
-        # Point is exclusively in target area if it's in target and not in any other area
-        is_in_target[i] = in_target and not in_other
+#         # Point is exclusively in target area if it's in target and not in shelf
+#         is_in_target[i] = in_target and not in_shelf
     
-    return is_in_target
+#     return is_in_target
 
 class TorchParticleFilter:
     def __init__(self, num_particles=1000, device='cuda'):

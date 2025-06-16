@@ -174,12 +174,8 @@ def process_wifi(wifi_file_path):
             logger.warning(f"Invalid record on line {i}: {record}")
             continue    
             
-        if JD_MODE:
-            if rssi <= FILTER_THRESHOLD or "JD" not in ssid: # TODO
-                continue
-        else:
-            if rssi <= FILTER_THRESHOLD: # TODO
-                continue
+        if rssi <= FILTER_THRESHOLD or "JD" not in ssid: # TODO
+            continue
             
         if not counted:
             if bssid in sampling_counter_dict["freq"].keys():
@@ -227,12 +223,8 @@ def process_wifi_with_filter(wifi_file_path, valid_aps):
             logger.warning(f"Invalid record on line {i}: {record}")
             continue    
             
-        if JD_MODE:
-            if rssi <= FILTER_THRESHOLD or bssid not in valid_aps or "JD" not in ssid: #TODO
-                continue
-        else:
-            if rssi <= FILTER_THRESHOLD or bssid not in valid_aps: #TODO
-                continue
+        if rssi <= FILTER_THRESHOLD or bssid not in valid_aps or "JD" not in ssid: #TODO
+            continue
                 
         if timestamp in wifi_record_dict.keys():
             if int(freq) > 5000:
@@ -410,6 +402,12 @@ def read_file_with_step_detector(dir_path, ap_unions, AP_dist_count, AP_dist, AP
     selected_waypoints = list(wifi_records_coor.keys())
     if verbose:
         # Check if first and last positions are at origin (0,0)
+        first_pos = positions[0, 1:]
+        last_pos = positions[-1, 1:]
+        logger.info(f"First position: {first_pos}, Last position: {last_pos}")
+        if not (np.allclose(first_pos, [0,0]) and np.allclose(last_pos, [0,0])):
+            logger.warning("First or last position not at origin!")
+        # assert np.allclose(positions[0, 1:], positions[-1, 1:])
         plt.scatter(*zip(*positions[:, 1:]), color='blue', label='RPs')
         plt.scatter(*zip(*selected_waypoints), color='red', label='RP with wifi')
         plt.xlabel("X Coordinate")
@@ -448,8 +446,8 @@ def read_file_with_step_detector(dir_path, ap_unions, AP_dist_count, AP_dist, AP
             for j, (ap2_union, ap2_rssi, ap2_band) in enumerate(zip(ap2_unions, ap2_rssis, ap2_bands)):
                 if valid_pairs[i, j]:
                     # 根据AP的频带计算LDPL值
-                    ldpl1 = LDPL(ap1_rssi, band=ap1_band, mode=LDPL_MODE)
-                    ldpl2 = LDPL(ap2_rssi, band=ap2_band, mode=LDPL_MODE)
+                    ldpl1 = LDPL(ap1_rssi, band=ap1_band)
+                    ldpl2 = LDPL(ap2_rssi, band=ap2_band)
                     new_dist = dist + ldpl1 + ldpl2
                     # Update matrices efficiently
                     AP_dist_count[ap1_union, ap2_union] += 1
@@ -589,17 +587,17 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
             for union_idx, rssis in union_to_rssis1.items():
                 mean_rssi = np.mean(rssis)
                 band = '5G' if any(b[2] == '5G' for b in wifi1 if b[0] in ap_unions and ap_unions[b[0]] == union_idx) else '2.4G'
-                wifi1_tensor[union_idx] = 1 / (1 + LDPL(mean_rssi, band=band, mode=LDPL_MODE))
+                wifi1_tensor[union_idx] = 1 / (1 + LDPL(mean_rssi, band=band))
                 
             for union_idx, rssis in union_to_rssis2.items():
                 mean_rssi = np.mean(rssis)
                 band = '5G' if any(b[2] == '5G' for b in wifi2 if b[0] in ap_unions and ap_unions[b[0]] == union_idx) else '2.4G'
-                wifi2_tensor[union_idx] = 1 / (1 + LDPL(mean_rssi, band=band, mode=LDPL_MODE))
+                wifi2_tensor[union_idx] = 1 / (1 + LDPL(mean_rssi, band=band))
 
             for union_idx, rssis in union_to_rssis_far.items():
                 mean_rssi = np.mean(rssis)
                 band = '5G' if any(b[2] == '5G' for b in farthest_wifi if b[0] in ap_unions and ap_unions[b[0]] == union_idx) else '2.4G'
-                farthest_tensor[union_idx] = 1 / (1 + LDPL(mean_rssi, band=band, mode=LDPL_MODE))
+                farthest_tensor[union_idx] = 1 / (1 + LDPL(mean_rssi, band=band))
             
             
             # Normalize tensors
@@ -822,17 +820,21 @@ def record_distinct_aps(data_dir, valid_aps):
     return merged_aps, ap_unions
 
 @log_execution_time
-def process_waypoints(is_training: bool, data_path: str):
-    """Process waypoint data for either training or testing.
+def process_waypoints_classification(is_training: bool, data_path: str):
+    """Process waypoint data as a classification dataset.
     
     Args:
         is_training (bool): True for training mode, False for testing mode
         data_path (str): Path to the data directory containing waypoint data
+    
+    Returns:
+        tuple: (features, labels, coordinates) where features is a list of WiFi feature dictionaries,
+               labels is a list of corresponding waypoint numbers, and coordinates is a tensor of positions
     """
     sub_dir = os.listdir(data_path)
     
     # Set output directory based on mode
-    output_dir = "data/train_json" if is_training else "data/test_json"
+    output_dir = "data/train_classification" if is_training else "data/test_classification"
     
     # Create output directory if it doesn't exist
     if os.path.exists(output_dir):
@@ -840,17 +842,36 @@ def process_waypoints(is_training: bool, data_path: str):
     os.makedirs(output_dir)
         
     pattern = r'^\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)\s*$'
-    wifi_pattern  = r"(\d+)\s+(.*?)\s+([0-9a-fA-F:]+)\s+(\d+)\s+(-\d+)"
-    training_coors = []
+    wifi_pattern = r"(\d+)\s+(.*?)\s+([0-9a-fA-F:]+)\s+(\d+)\s+(-\d+)"
+    
+    all_features = []
+    all_labels = []
+    all_coordinates = []  # Store coordinates for each waypoint
+    label_count = {}
 
     for dir in sub_dir:
         logger.info(f"Processing {dir}")
+        
+        # Extract waypoint number from directory name
+        # Try multiple patterns: "waypoint1", "waypoint-1", "1", etc.
+        waypoint_match = re.search(r'waypoint[-_]?(\d+)', dir, re.IGNORECASE)
+        if waypoint_match:
+            label = int(waypoint_match.group(1))
+        else:
+            # Fallback: try to extract any number from the directory name
+            number_match = re.search(r'(\d+)', dir)
+            if number_match:
+                label = int(number_match.group(1))
+            else:
+                logger.warning(f"Could not extract waypoint number from directory name: {dir}")
+                continue
+        
         with open(f"{data_path}/{dir}/wifi.txt", 'r') as f:
             all_records = f.readlines()
             
         start_coor_id = -1
         last_timestamp = -1
-        single_trace_data = {}
+        coordinate_tuple = None
         
         for i, record in enumerate(all_records):
             if re.match(pattern, record):
@@ -865,21 +886,86 @@ def process_waypoints(is_training: bool, data_path: str):
                     wifi_records = all_records[start_coor_id: i]
                     try:
                         bssid_rssi = read_waypoint(wifi_records)
-                        for k, v in bssid_rssi.items():
-                            single_trace_data[k] = v
+                        # Each timestamp creates one sample
+                        for timestamp, wifi_data in bssid_rssi.items():
+                            all_features.append(wifi_data)
+                            all_labels.append(label)
+                            if coordinate_tuple is not None:
+                                all_coordinates.append(coordinate_tuple)
+                            
+                            # Count samples per label
+                            if label not in label_count:
+                                label_count[label] = 0
+                            label_count[label] += 1
+                            
                     except Exception as e:
-                        # Extract waypoint number from directory name
-                        waypoint_num = dir.split('-')[1] if '-' in dir else dir
-                        logger.error(f"Error encountered when processing waypoint #{waypoint_num}, {e}")
+                        logger.error(f"Error encountered when processing waypoint #{label}, {e}")
                     start_coor_id = i
                     last_timestamp = current_timestamp
                 
-        # Save processed data
-        if single_trace_data:
-            with open(f"{output_dir}/{coordinate_tuple}.json", 'w') as f:
-                json.dump(single_trace_data, f)
-            training_coors.append(coordinate_tuple)
-    return torch.tensor(training_coors)
+        # Process the last segment if it exists
+        if start_coor_id != -1:
+            wifi_records = all_records[start_coor_id:]
+            try:
+                bssid_rssi = read_waypoint(wifi_records)
+                for timestamp, wifi_data in bssid_rssi.items():
+                    all_features.append(wifi_data)
+                    all_labels.append(label)
+                    if coordinate_tuple is not None:
+                        all_coordinates.append(coordinate_tuple)
+                    
+                    if label not in label_count:
+                        label_count[label] = 0
+                    label_count[label] += 1
+                    
+            except Exception as e:
+                logger.error(f"Error encountered when processing waypoint #{label}, {e}")
+    
+    # Convert coordinates to tensor
+    if all_coordinates:
+        coordinates_tensor = torch.tensor(all_coordinates)
+    else:
+        coordinates_tensor = torch.tensor([[0.0, 0.0]])  # Fallback if no coordinates found
+    
+    # Save the classification dataset
+    classification_data = {
+        'features': all_features,
+        'labels': all_labels,
+        'coordinates': [list(coord) for coord in all_coordinates],  # Convert tuples to lists for JSON serialization
+        'label_count': label_count,
+        'num_samples': len(all_features),
+        'num_classes': len(set(all_labels))
+    }
+    
+    output_file = os.path.join(output_dir, 'classification_dataset.json')
+    with open(output_file, 'w') as f:
+        json.dump(classification_data, f, indent=4)
+    
+    # Also save as numpy arrays for easier loading
+    np.save(os.path.join(output_dir, 'labels.npy'), np.array(all_labels))
+    np.save(os.path.join(output_dir, 'coordinates.npy'), coordinates_tensor.numpy())
+    
+    # Save label statistics
+    stats_file = os.path.join(output_dir, 'dataset_stats.json')
+    with open(stats_file, 'w') as f:
+        json.dump({
+            'total_samples': len(all_features),
+            'unique_labels': sorted(list(set(all_labels))),
+            'samples_per_label': label_count,
+            'num_classes': len(set(all_labels)),
+            'coordinate_range': {
+                'x_min': float(coordinates_tensor[:, 0].min()),
+                'x_max': float(coordinates_tensor[:, 0].max()),
+                'y_min': float(coordinates_tensor[:, 1].min()),
+                'y_max': float(coordinates_tensor[:, 1].max())
+            }
+        }, f, indent=4)
+    
+    logger.info(f"Saved {len(all_features)} samples with {len(set(all_labels))} unique waypoint labels")
+    logger.info(f"Label distribution: {label_count}")
+    logger.info(f"Coordinate range: x=[{coordinates_tensor[:, 0].min():.2f}, {coordinates_tensor[:, 0].max():.2f}], y=[{coordinates_tensor[:, 1].min():.2f}, {coordinates_tensor[:, 1].max():.2f}]")
+    
+    return all_features, all_labels, coordinates_tensor
 
 @log_execution_time
 def process_all(unlabeled_dir_path):
@@ -957,29 +1043,101 @@ def plot_ap_mean_heatmap(output_dir="output/data_process"):
     heatmap(mean_dist, heatmap_path)
     logger.info(f"Saved AP mean distance heatmap to {heatmap_path}")
 
+def convert_classification_to_tensors(features, labels, ap_unions):
+    """
+    Convert classification features and labels to tensors suitable for machine learning.
+    
+    Args:
+        features (list): List of WiFi feature dictionaries
+        labels (list): List of waypoint labels
+        ap_unions (dict): Dictionary mapping BSSIDs to union IDs
+        
+    Returns:
+        tuple: (feature_tensors, label_tensors) where feature_tensors is shape [N, num_aps]
+               and label_tensors is shape [N]
+    """
+    logger.info("Converting classification data to tensors")
+    
+    num_samples = len(features)
+    num_aps = len(set(ap_unions.values()))
+    
+    # Initialize feature tensor
+    feature_tensors = torch.zeros(num_samples, num_aps)
+    label_tensors = torch.tensor(labels, dtype=torch.long)
+    
+    for i, wifi_data in enumerate(features):
+        # wifi_data is a dict mapping AP union IDs to (avg_rssi, band) tuples
+        for ap_union_id, (avg_rssi, band) in wifi_data.items():
+            # Convert RSSI to a feature value (you can modify this transformation)
+            feature_value = 1 / (1 + LDPL(avg_rssi, band=band))
+            feature_tensors[i, ap_union_id] = feature_value
+    
+    # Normalize features (optional)
+    feature_tensors = feature_tensors / (feature_tensors.sum(dim=1, keepdim=True) + 1e-8)
+    
+    logger.info(f"Converted {num_samples} samples to tensors of shape {feature_tensors.shape}")
+    return feature_tensors, label_tensors
+
+def save_classification_tensors(output_dir, feature_tensors, label_tensors, is_training=True):
+    """
+    Save classification tensors to files.
+    
+    Args:
+        output_dir (str): Output directory
+        feature_tensors (torch.Tensor): Feature tensors
+        label_tensors (torch.Tensor): Label tensors
+        is_training (bool): Whether this is training data
+    """
+    prefix = "train" if is_training else "test"
+    
+    # Save as PyTorch tensors
+    torch.save(feature_tensors, os.path.join(output_dir, f'{prefix}_features.pt'))
+    torch.save(label_tensors, os.path.join(output_dir, f'{prefix}_labels.pt'))
+    
+    # Save as numpy arrays
+    np.save(os.path.join(output_dir, f'{prefix}_features.npy'), feature_tensors.numpy())
+    np.save(os.path.join(output_dir, f'{prefix}_labels.npy'), label_tensors.numpy())
+    
+    logger.info(f"Saved {prefix} tensors: features {feature_tensors.shape}, labels {label_tensors.shape}")
+
 if __name__ == "__main__":
     start_time = time.time()
     
     # Add the new function call
     # merged_aps, ap_unions = record_distinct_aps("data/WiMU data/unlabeled_data")
     sampling_counter_path = 'output/data_process/sampling_counter.json'
-    # if not os.path.exists(sampling_counter_path):
-    sampling_counter_dict = {
-        "counted": [],
-        "freq": {}
-    }
-    os.makedirs(os.path.dirname(sampling_counter_path), exist_ok=True)
-    with open(sampling_counter_path, 'w') as f:
-        json.dump(sampling_counter_dict, f, indent=4)
+    if not os.path.exists(sampling_counter_path):
+        sampling_counter_dict = {
+            "counted": [],
+            "freq": {}
+        }
+        os.makedirs(os.path.dirname(sampling_counter_path), exist_ok=True)
+        with open(sampling_counter_path, 'w') as f:
+            json.dump(sampling_counter_dict, f, indent=4)
     
-    ap_unions = process_all("data/HKUST_2F/unlabeled")
-    training_coors = process_waypoints(is_training=True, data_path="data/HKUST_2F/train")
-    testing_coors = process_waypoints(is_training=False, data_path="data/HKUST_2F/test")
+    ap_unions = process_all("data/JD_tongwu_5_22/unlabeled")
+    
+    # Process classification datasets
+    train_features, train_labels, train_coordinates = process_waypoints_classification(is_training=True, data_path="data/JD_tongwu_5_22/train")
+    test_features, test_labels, test_coordinates = process_waypoints_classification(is_training=False, data_path="data/JD_tongwu_5_22/test")
+    
+    # Convert to tensors for machine learning
+    train_feature_tensors, train_label_tensors = convert_classification_to_tensors(train_features, train_labels, ap_unions)
+    test_feature_tensors, test_label_tensors = convert_classification_to_tensors(test_features, test_labels, ap_unions)
+    
+    # Save tensors
+    save_classification_tensors("data/train_classification", train_feature_tensors, train_label_tensors, is_training=True)
+    save_classification_tensors("data/test_classification", test_feature_tensors, test_label_tensors, is_training=False)
+    
+    # Calculate position range and minimum from training coordinates (as in original code)
+    training_coors = train_coordinates
     training_pos_range = torch.max(training_coors, dim=0)[0] - torch.min(training_coors, dim=0)[0]
-    # training_pos_range = torch.tensor([20.6, 81])
     training_pos_min = torch.min(training_coors, dim=0)[0]
-    # training_pos_min = torch.tensor([8.4, -33])
-    process_directory_for_steps("data/HKUST_2F/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
+    
+    logger.info(f"Training coordinate range: {training_pos_range}")
+    logger.info(f"Training coordinate minimum: {training_pos_min}")
+    
+    process_directory_for_steps("data/JD_tongwu_5_22/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
     end_time = time.time()
     total_time = end_time - start_time
     logger.info(f"Total execution time: {total_time:.2f} seconds")

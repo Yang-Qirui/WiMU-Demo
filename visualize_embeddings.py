@@ -3,6 +3,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from utils import LDPL
+from config import LDPL_MODE
 import torch
 from torch_geometric.data import Data
 from gnn import GCNEncoder, JointModel, MLPDecoder, MyMLP
@@ -17,7 +18,7 @@ def preprocess_rssi(rssi_values, num_nodes):
     # Convert RSSI values to distance-like values using LDPL
     weights = torch.zeros(num_nodes)
     for i, rssi in rssi_values.items():
-        weights[int(i)] = 1 / (1 + LDPL(rssi))
+        weights[int(i)] = 1 / (1 + LDPL(rssi, mode=LDPL_MODE))
     weights = weights / sum(weights)
     return weights
 

@@ -37,7 +37,7 @@ def init_logger(logger_name, log_name="app.log"):
     logger.addHandler(file_handler)
     return logger
 
-def LDPL(rssi, band='5G', r0_5g=32, r0_2g=38, n_5g=2.2, n_2g=2):
+def LDPL(rssi, band='5G', r0_5g=32, r0_2g=38, n_5g=2.2, n_2g=2, mode='default'):
     """
     Log-Distance Path Loss model for different frequency bands
     
@@ -48,11 +48,18 @@ def LDPL(rssi, band='5G', r0_5g=32, r0_2g=38, n_5g=2.2, n_2g=2):
         r0_2g: Reference distance for 2.4GHz in dBm
         n_5g: Path loss exponent for 5GHz
         n_2g: Path loss exponent for 2.4GHz
+        mode: 'default' or 'jd'
     """
-    if band == '5G':
-        return np.power(10, (-rssi - r0_5g) / (10 * n_5g))
-    else:  # 2.4G
-        return np.power(10, (-rssi - r0_2g) / (10 * n_2g))
+    if mode == 'default':
+        if band == '5G':
+            return np.power(10, (-rssi - r0_5g) / (10 * n_5g))
+        else:  # 2.4G
+            return np.power(10, (-rssi - r0_2g) / (10 * n_2g))
+    elif mode == 'jd':
+        if band == '5G':
+            return np.power(10, (-rssi - 21) / 33)
+        else:  # 2.4G
+            return np.power(10, (-rssi - 27) / 33)
 
 def longest_common_substring(str1:str, str2:str):
     str1 = str1.replace(":", "")
@@ -141,7 +148,7 @@ def prune_adjacency_topk_min(A_orig, k=5):
 
     return A_pruned
 
-def plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses, val_dist_losses, train_contrast_losses, val_contrast_losses):
+def plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses, val_dist_losses, train_l1_losses, val_l1_losses):
     """
     Plot the training and validation losses during pre-training
     """
@@ -167,11 +174,11 @@ def plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses
     
     # Plot contrast losses
     plt.subplot(1, 3, 3)
-    plt.plot(train_contrast_losses, label='Train Contrast Loss')
-    plt.plot(val_contrast_losses, label='Validation Contrast Loss')
+    plt.plot(train_l1_losses, label='Train L1 Regularization Loss')
+    plt.plot(val_l1_losses, label='Validation L1 Regularization Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Contrast Loss vs Epoch')
+    plt.title('L1 Regularization Loss vs Epoch')
     plt.legend()
     
     plt.tight_layout()
@@ -320,4 +327,154 @@ def calculate_step_errors(traj, ground_truth):
     return np.mean(step_errors)
     
     
+class CircularArray:
+    """
+    循环数组实现
+    支持固定大小的循环存储，当数组满时，新的元素会覆盖最旧的元素
+    """
+    def __init__(self, capacity):
+        """
+        初始化循环数组
+        
+        Args:
+            capacity (int): 数组的容量
+        """
+        self.capacity = capacity
+        self.array = [None] * capacity
+        self.size = 0
+        self.head = 0  # 指向下一个要写入的位置
+        self.tail = 0  # 指向最旧的元素位置
+    
+    def push(self, item):
+        """
+        添加新元素到循环数组中
+        
+        Args:
+            item: 要添加的元素
+        """
+        self.array[self.head] = item
+        self.head = (self.head + 1) % self.capacity
+        
+        if self.size < self.capacity:
+            self.size += 1
+        else:
+            self.tail = (self.tail + 1) % self.capacity
+    
+    def get(self, index):
+        """
+        获取指定索引的元素
+        
+        Args:
+            index (int): 要获取的元素索引（0表示最新的元素）
+            
+        Returns:
+            指定索引的元素，如果索引无效则返回None
+        """
+        if index < 0 or index >= self.size:
+            return None
+        actual_index = (self.head - 1 - index) % self.capacity
+        return self.array[actual_index]
+    
+    def get_all(self):
+        """
+        获取所有元素，按时间顺序从新到旧排列
+        
+        Returns:
+            list: 包含所有元素的列表
+        """
+        result = []
+        for i in range(self.size):
+            result.append(self.get(i))
+        return result
+    
+    def clear(self):
+        """清空数组"""
+        self.array = [None] * self.capacity
+        self.size = 0
+        self.head = 0
+        self.tail = 0
+    
+    def is_empty(self):
+        """检查数组是否为空"""
+        return self.size == 0
+    
+    def is_full(self):
+        """检查数组是否已满"""
+        return self.size == self.capacity
+    
+    def get_size(self):
+        """获取当前存储的元素数量"""
+        return self.size
+    
+    def get_capacity(self):
+        """获取数组的容量"""
+        return self.capacity
+    
+    def find_closest(self, key, key_func=None, compare_func=None):
+        """
+        查找与给定key最相近的元素
+        
+        Args:
+            key: 要查找的键值
+            key_func: 用于从元素中提取键值的函数，默认为None（直接比较元素）
+            compare_func: 用于比较两个键值的函数，默认为None（使用减法比较）
+                         compare_func(a, b) 应返回一个数值，表示a和b的差异
+            
+        Returns:
+            tuple: (最相近的元素, 差异值)，如果没有元素则返回(None, float('inf'))
+        """
+        if self.is_empty():
+            return None, float('inf'), None
+            
+        if key_func is None:
+            key_func = lambda x: x
+            
+        if compare_func is None:
+            compare_func = lambda a, b: abs(a - b)
+            
+        closest_item = None
+        closest_index = None
+        min_diff = float('inf')
+        
+        for i in range(self.size):
+            item = self.get(i)
+            item_key = key_func(item)
+            diff = compare_func(item_key, key)
+            
+            if diff < min_diff:
+                min_diff = diff
+                closest_item = item
+                closest_index = i
+
+        return closest_item, min_diff, closest_index
+    
+    def find_index(self, key, key_func=None, compare_func=None):
+        """
+        查找完全匹配key的元素的索引
+        
+        Args:
+            key: 要查找的键值
+            key_func: 用于从元素中提取键值的函数，默认为None（直接比较元素）
+            compare_func: 用于比较两个键值的函数，默认为None（使用相等比较）
+                         compare_func(a, b) 应返回布尔值，表示a和b是否相等
+            
+        Returns:
+            tuple: (最相近的元素, 索引)，如果没有元素则返回(None, None)
+        """
+        if self.is_empty():
+            return None, float('inf'), None
+            
+        if key_func is None:
+            key_func = lambda x: x
+            
+        if compare_func is None:
+            compare_func = lambda a, b: a == b
+            
+        for i in range(self.size):
+            item = self.get(i)
+            item_key = key_func(item)
+            if compare_func(item_key, key):
+                return item, i
+                
+        return None, None
 

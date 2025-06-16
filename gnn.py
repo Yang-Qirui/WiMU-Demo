@@ -313,3 +313,89 @@ def mutual_info_loss(S, D, bins=20):
     mi = torch.clamp(mi, min=0)  # Ensure non-negative
     
     return 1 - mi  # Convert to loss (minimize this)
+
+class ClassificationHead(nn.Module):
+    def __init__(self, in_channel, num_classes, dropout=0.5):
+        super(ClassificationHead, self).__init__()
+        self.fc1 = nn.Linear(in_channel, 2 * in_channel)
+        self.dropout1 = nn.Dropout(dropout)
+        self.fc2 = nn.Linear(2 * in_channel, in_channel)
+        self.dropout2 = nn.Dropout(dropout)
+        self.fc3 = nn.Linear(in_channel, in_channel // 2)
+        self.fc4 = nn.Linear(in_channel // 2, num_classes)
+        self.relu = nn.ReLU()
+        
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.dropout1(x)
+        x = self.relu(self.fc2(x))
+        x = self.dropout2(x)
+        x = self.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x  # Return logits, will apply softmax in loss function
+
+class JointClassificationModel(torch.nn.Module):
+    def __init__(self, gnn, classification_head):
+        super(JointClassificationModel, self).__init__()
+        self.gnn = gnn
+        self.classification_head = classification_head
+     
+    def encode(self, graph):
+        return self.gnn.encode(graph.x, graph.edge_index, graph.edge_attr)
+        
+    def decode(self, embs):
+        return self.gnn.decoder(embs)
+        
+    def kl_loss(self):
+        return self.gnn.kl_loss()
+    
+    def gen_emb(self, graph, weights):
+        embs = self.encode(graph)
+        return torch.matmul(embs.T, weights.unsqueeze(-1))
+        
+    def forward(self, graph, batch_weights):
+        """
+        Args:
+            graph: Graph dataset
+            batch_weights: [batch_size, num_aps] - WiFi weights for each sample in the batch
+        
+        Returns:
+            class_logits: [batch_size, num_classes]
+            recon_A: [num_aps, num_aps] - reconstructed adjacency matrix
+        """
+        embs = self.encode(graph)  # [num_aps, fp_dim]
+        
+        # Handle batch processing: batch_weights is [batch_size, num_aps]
+        # embs.T is [fp_dim, num_aps]
+        # We want to compute weighted sum for each sample in the batch
+        batch_features = torch.matmul(batch_weights, embs)  # [batch_size, fp_dim]
+        
+        # Apply classification head
+        class_logits = self.classification_head(batch_features)  # [batch_size, num_classes]
+        
+        # Reconstruction (independent of batch)
+        recon_A = self.decode(embs)  # [num_aps, num_aps]
+        
+        return class_logits, recon_A
+
+class ClassificationDataset(torch.utils.data.Dataset):
+    def __init__(self, features, labels, coordinates=None):
+        """
+        Args:
+            features: N * num_aps (WiFi features)
+            labels: N (classification labels)
+            coordinates: N * 2 (optional coordinates)
+        """
+        self.features = features
+        self.labels = labels
+        self.coordinates = coordinates
+        self.device = features.device
+    
+    def __len__(self):
+        return len(self.features)
+    
+    def __getitem__(self, idx):
+        if self.coordinates is not None:
+            return self.features[idx], self.labels[idx], self.coordinates[idx]
+        else:
+            return self.features[idx], self.labels[idx]
