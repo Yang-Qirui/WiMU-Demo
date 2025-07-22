@@ -38,9 +38,10 @@ def pre_train(args):
     min_val, max_val = np.min(A[~mask]), np.max(A[~mask])
     A[~mask] = (A[~mask] - min_val) / (max_val - min_val)
     mask = A == 0
-    k = 10
+    k = 1
     A[~mask] = 1 + np.tanh(-k * A[~mask])
     A = prune_adjacency_topk_min(A, k=20)
+    # np.fill_diagonal(A, 1)
     A = torch.from_numpy(A).to(device).float()
     torch.save(A, "./output/adjacency/original_adj.pt")
     # Create graph dataset
@@ -416,8 +417,10 @@ def fine_tune(args):
             delta_coors = (_train_rp_coors - predict_coors) * rp_pos_range
             for i in range(len(delta_coors)):
                 _err = delta_coors[i].pow(2).sum().sqrt()
-                train_errors.append(_err.item())            # Combined loss
-            loss = alpha * loc_loss + recon_loss # + l1_reg
+                train_real_coor = _train_rp_coors[i] * rp_pos_range + rp_pos_min
+                predict_real_coor = predict_coors[i] * rp_pos_range + rp_pos_min
+                train_errors.append((f"[{train_real_coor[0]}, {train_real_coor[1]}]-[{predict_real_coor[0]}, {predict_real_coor[1]}]-[{predict_coors[i][0]}, {predict_coors[i][1]}]", _err.item()))            # Combined loss
+            loss = alpha * loc_loss # + recon_loss # + l1_reg
             
             # print(f"loss: {loss.item()}, recon_loss: {recon_loss.item()}, loc_loss: {loc_loss.item()}, l1_reg: {l1_reg.item()}")
             # Backward pass
@@ -426,11 +429,18 @@ def fine_tune(args):
             
             train_epoch_loss += loss.item()
         scheduler.step()
-        train_std = np.std(train_errors)
+        train_std = np.std([train_errors[i][1] for i in range(len(train_errors))])
         train_epoch_loss /= len(train_loader)
         train_losses.append(train_epoch_loss)
         
         # Evaluation
+        train_result = {}
+        for i in range(len(train_errors)):
+            train_result[train_errors[i][0]] = train_errors[i][1]
+        train_result["train_std"] = train_std
+        
+        with open(f"./output/fine_tuned_train_result.json", 'w') as f:
+            json.dump(train_result, f)
         model.eval()
         test_result = {}
         x_err, y_err, test_err_std = [], [], []
@@ -461,6 +471,9 @@ def fine_tune(args):
             with open(f"./output/fine_tuned_test_result.json", 'w') as f:
                 json.dump(test_result, f)
             min_test_err = test_epoch_error
+            
+            # Save best fine-tuned model
+            torch.save(model.state_dict(), f"./output/fine_tuned_model.pt")
             
             # Compute and save embeddings for training and test sets
             # print("Computing embeddings for best fine-tuned model...")
@@ -498,36 +511,43 @@ def grid_search(param_grid):
         print(f"Starting grid search with {len(param_combinations)} combinations...")
         
         for params in param_combinations:
-            print("\nTrying parameters:", params)
-            
-            # Create args namespace with current parameter set
-            args = argparse.Namespace(
-                fp_dim=params['fp_dim'],
-                lr=params['lr'], 
-                batch_size=params['batch_size'],
-                patience=params['patience'],
-                pre_train_epoch=2000,
-                fine_tune_epoch=2000
-            )
-            
-            pre_train(args)
-            # Run training with current parameters
-            fine_tune(args)
-            
-            # Load test results to get error
-            with open(f"./output/fine_tuned_test_result.json", 'r') as f:
-                results = json.load(f)
-            
-            # Calculate mean error excluding std values
-            errors = [v for k,v in results.items() if k not in ['x_err_std', 'y_err_std']]
-            mean_error = sum(errors) / len(errors)
-            
-            # Update best parameters if better error found
-            if mean_error < best_error:
-                best_error = mean_error
-                best_params = params.copy()
-                print(f"New best parameters found! Error: {best_error:.4f}")
-                json.dump(best_params, open(f"./output/best_params.json", 'w'))
+            try:
+                print("\nTrying parameters:", params)
+                
+                # Create args namespace with current parameter set
+                dir_path = f"output/{params['fp_dim']}-{params['lr']}-{params['batch_size']}-{params['patience']}"
+                os.mkdir(dir_path)
+                args = argparse.Namespace(
+                    fp_dim=params['fp_dim'],
+                    lr=params['lr'], 
+                    batch_size=params['batch_size'],
+                    patience=params['patience'],
+                    pre_train_epoch=2000,
+                    fine_tune_epoch=2000,
+                    save_dir = dir_path,
+                    beta = 10
+                )
+                
+                pre_train(args)
+                # Run training with current parameters
+                fine_tune(args)
+                
+                # Load test results to get error
+                with open(f"./output/fine_tuned_test_result.json", 'r') as f:
+                    results = json.load(f)
+                
+                # Calculate mean error excluding std values
+                errors = [v for k,v in results.items() if k not in ['x_err_std', 'y_err_std']]
+                mean_error = sum(errors) / len(errors)
+                
+                # Update best parameters if better error found
+                if mean_error < best_error:
+                    best_error = mean_error
+                    best_params = params.copy()
+                    print(f"New best parameters found! Error: {best_error:.4f}")
+                    json.dump(best_params, open(f"./output/best_params.json", 'w'))
+            except Exception as e:
+                print(e)
         
         print("\nGrid search completed!")
         print("Best parameters:", best_params)
@@ -606,7 +626,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--lr", help="training learning rate", default=1e-4, type=float)
     arg_parser.add_argument("--pre_train_epoch", help="pre-training epoch number", default=1000, type=int)
     arg_parser.add_argument("--fine_tune_epoch", help="fine-tuning epoch number", default=2000, type=int)
-    arg_parser.add_argument("--batch_size", help="batch size for training", default=64, type=int)
+    arg_parser.add_argument("--batch_size", help="batch size for training", default=16, type=int)
     arg_parser.add_argument("--patience", help="patience for early stopping", default=20, type=int)
     arg_parser.add_argument("--pre_train", help="whether to pre-train", action="store_true")
     arg_parser.add_argument("--grid_search", help="whether to grid search", action="store_true")

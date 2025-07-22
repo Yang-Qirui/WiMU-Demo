@@ -26,16 +26,16 @@ logging.basicConfig(level=logging.DEBUG)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load graph dataset
-graph_dataset = torch.load("./params/HKUST_2F/graph_dataset.pt", weights_only=False).to(device)
+graph_dataset = torch.load("./output/graph_dataset.pt", weights_only=False).to(device)
 # Initialize models
 gnn = GAE(GCNEncoder(128, 128), MLPDecoder(128)).to(device)
 mlp = MyMLP(128, 2).float().to(device)
 model = JointModel(gnn, mlp).to(device)
-model.load_state_dict(torch.load('./params/HKUST_2F/fine_tuned_model.pt'))
+model.load_state_dict(torch.load('./output/fine_tuned_model.pt'))
 model.eval()
 
 # Load normalization parameters
-norm_params = torch.load('./params/HKUST_2F/norm_params.pt')
+norm_params = torch.load('./output/norm_params.pt')
 pos_range = norm_params['pos_range'].to(device)
 pos_min = norm_params['pos_min'].to(device)
 # Save normalization parameters as JSON
@@ -47,7 +47,7 @@ norm_params_json = {
 }
 
 
-with open("./params/HKUST_2F/ap_unions.json", 'r') as f:
+with open("./output/data_process/ap_unions.json", 'r') as f:
     ap_mapping = json.load(f)
 
 pf = TorchParticleFilter(num_particles=1000, device=device)
@@ -62,7 +62,7 @@ def wifi_inference(data):
         bssid = entry['bssid']
         freq = entry['frequency']
         rssi = entry['rssi']
-        # logging.debug(f"{bssid}, {freq}, {rssi}")
+        print(f"{bssid}, {entry['ssid']}, {freq}, {rssi}")
         
         # 根据频率判断频段
         band = '5G' if freq >= 5000 else '2.4G'
@@ -91,6 +91,8 @@ def wifi_inference(data):
         # Make prediction
         with torch.no_grad():
             predict_coors, _ = model(graph_dataset, input_weights)
+            embs = model.gen_emb(graph_dataset, input_weights)
+            torch.save(embs, "./output/embs.pt")
             predict_coors = predict_coors * pos_range + pos_min
             predict = predict_coors.cpu().tolist()[0]  # Remove batch dimension
         return predict
@@ -128,7 +130,7 @@ def echo():
                 avg_rssi = sum(rssi for rssi, _ in rssi_band_list) / len(rssi_band_list)
                 # 使用对应频段的LDPL参数
                 band = bssid_band_map[union_id]
-                logging.debug(f"{union_id}, {avg_rssi}, {band}")
+                print(f"{union_id}, {avg_rssi}, {band}")
                 weight = 1 / (1 + LDPL(avg_rssi, band=band, mode=LDPL_MODE))
                 input_weights[union_id] = weight
             
@@ -151,6 +153,9 @@ def echo():
 
 @app.route('/inference', methods=['POST', 'GET'])
 def inference():
+    data = request.json
+    print(f"data: {data}")
+    return jsonify({"x": -100, "y": 100})
     logging.debug("=" * os.get_terminal_size().columns)
     try:
         data = request.json
@@ -159,7 +164,7 @@ def inference():
         if predict is None:
             return jsonify({"error": "No valid data"})
         if data['dx'] == 0 and data['dy'] == 0:
-            logging.debug(f"No IMU, Observation: {predict}")
+            print(f"No IMU, Observation: {predict}")
             pf.reset(predict, data['obs_noise_scale'])
             return jsonify({"x": predict[0], "y": predict[1]})
         pf.update(
@@ -169,22 +174,27 @@ def inference():
             obs_noise_scale=data['obs_noise_scale']
         )
         estimate = pf.estimate.cpu().numpy().tolist()
-        logging.debug(f"system_noise_scale: {data['system_noise_scale']}, obs_noise_scale: {data['obs_noise_scale']}")
-        logging.debug(f"Observation: {predict}, Estimation: {estimate}")
+        print(f"system_noise_scale: {data['system_noise_scale']}, obs_noise_scale: {data['obs_noise_scale']}")
+        print(f"Observation: {predict}, Estimation: {estimate}")
         return jsonify({"x": estimate[0], "y": estimate[1]})
     except Exception as e:
         return jsonify({"error": str(e)})
 
 @app.route('/reset', methods=['POST', 'GET'])
 def reset():
+    data = request.json
+    print(f"data: {data}")
+    return jsonify({"x": 100, "y": 100})	
     logging.debug("=" * os.get_terminal_size().columns)
     data = request.json
     predict = wifi_inference(data)
+    print(f"predict: {predict}")
     if predict is None:
         return jsonify({"error": "No valid data"})
     pf.reset(predict, data['obs_noise_scale'])
-    logging.debug(f"system_noise_scale: {data['system_noise_scale']}, obs_noise_scale: {data['obs_noise_scale']}")
-    logging.debug(f"Reset: {predict}")
+    print(f"system_noise_scale: {data['system_noise_scale']}, obs_noise_scale: {data['obs_noise_scale']}")
+    # logging.debug(f"Reset: {predict}")
+    print(f"Reset: {predict}")
     return jsonify({"x": predict[0], "y": predict[1]})
 
 @app.route('/sendimu', methods=['POST', 'GET'])
@@ -249,5 +259,11 @@ def inference2():
 
 
 if __name__ == '__main__':
-    print("Server is running on port 13344")
-    app.run(host='0.0.0.0', port=13344, debug=True)
+    import argparse
+    
+    # 添加命令行参数解析
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port', type=int, default=13344, help='服务器端口号')
+    args = parser.parse_args()
+    print(f"服务器运行在端口 {args.port}")
+    app.run(host='0.0.0.0', port=args.port, debug=True)

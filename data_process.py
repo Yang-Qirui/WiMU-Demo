@@ -178,7 +178,7 @@ def process_wifi(wifi_file_path):
             if rssi <= FILTER_THRESHOLD or "JD" not in ssid: # TODO
                 continue
         else:
-            if rssi <= FILTER_THRESHOLD: # TODO
+            if rssi <= FILTER_THRESHOLD : #or ("Hilton Meeting" in ssid): # TODO
                 continue
             
         if not counted:
@@ -186,7 +186,7 @@ def process_wifi(wifi_file_path):
                 sampling_counter_dict["freq"][bssid][0] += 1
             else:
                 band = '5G' if int(freq) > 5000 else '2.4G'
-                sampling_counter_dict["freq"][bssid] = [1, band]
+                sampling_counter_dict["freq"][bssid] = [1, band, ssid]
                 
         if timestamp in wifi_record_dict.keys():
             band = '5G' if int(freq) > 5000 else '2.4G'
@@ -231,7 +231,7 @@ def process_wifi_with_filter(wifi_file_path, valid_aps):
             if rssi <= FILTER_THRESHOLD or bssid not in valid_aps or "JD" not in ssid: #TODO
                 continue
         else:
-            if rssi <= FILTER_THRESHOLD or bssid not in valid_aps: #TODO
+            if rssi <= FILTER_THRESHOLD or bssid not in valid_aps: #or ("Hilton Meeting" in ssid): #TODO
                 continue
                 
         if timestamp in wifi_record_dict.keys():
@@ -518,6 +518,7 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
     
     waypoints = list(wifi_records_coor.keys())
     for i in range(len(waypoints)-1):
+            # j = i + 1
         for j in range(i+1, len(waypoints)):
             wifi1 = wifi_records_coor[waypoints[i]]
             wifi2 = wifi_records_coor[waypoints[j]]
@@ -663,7 +664,7 @@ def merge_similar_aps(aps_dict):
     for bssid, info in sorted_aps.items():
         # Get the prefix (first 11 characters of MAC address)
         
-        prefix = bssid[:16]
+        prefix = bssid[:17]
         
         # Check if we've seen this prefix before
         if prefix in merged_aps:
@@ -863,7 +864,7 @@ def process_all(unlabeled_dir_path):
         wifi_file = os.path.join(dir_path, 'wifi.txt')
         process_wifi(wifi_file)
     sampling_counter = json.load(open("output/data_process/sampling_counter.json", 'r'))
-    valid_aps = [bssid for bssid, (count, _) in sampling_counter["freq"].items() if count >= MINIMUM_SCANNING_TIMES] # minimum scanning tims
+    valid_aps = [bssid for bssid, (count, _, _) in sampling_counter["freq"].items() if count >= MINIMUM_SCANNING_TIMES] # minimum scanning tims
     # First, record and merge all distinct APs
     merged_aps, ap_unions = record_distinct_aps(unlabeled_dir_path, valid_aps)
     ap_num = len(merged_aps)
@@ -936,14 +937,14 @@ if __name__ == "__main__":
     with open(sampling_counter_path, 'w') as f:
         json.dump(sampling_counter_dict, f, indent=4)
     
-    ap_unions = process_all("data/JD_langfang_high/unlabeled")
-    training_coors = process_waypoints(is_training=True, data_path="data/JD_langfang_high/train")
-    testing_coors = process_waypoints(is_training=False, data_path="data/JD_langfang_high/test")
+    ap_unions = process_all("data/mobisys_merge/unlabeled")
+    training_coors = process_waypoints(is_training=True, data_path="data/mobisys_merge/train")
+    testing_coors = process_waypoints(is_training=False, data_path="data/mobisys_merge/test")
     training_pos_range = torch.max(training_coors, dim=0)[0] - torch.min(training_coors, dim=0)[0]
     # training_pos_range = torch.tensor([20.6, 81])
     training_pos_min = torch.min(training_coors, dim=0)[0]
     # training_pos_min = torch.tensor([8.4, -33])
-    process_directory_for_steps("data/JD_langfang_high/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
+    process_directory_for_steps("data/mobisys_merge/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
     end_time = time.time()
     total_time = end_time - start_time
     logger.info(f"Total execution time: {total_time:.2f} seconds")

@@ -37,7 +37,7 @@ def init_logger(logger_name, log_name="app.log"):
     logger.addHandler(file_handler)
     return logger
 
-def LDPL(rssi, band='5G', r0_5g=32, r0_2g=38, n_5g=2.2, n_2g=2, mode='default'):
+def LDPL(rssi, band='5G', r0_5g=30, r0_2g=40, n_5g=2.5, n_2g=2.5, mode='default'):
     """
     Log-Distance Path Loss model for different frequency bands
     

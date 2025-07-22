@@ -40,3 +40,7 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db 
+
+*.db
+
+frontend/node_modules/
