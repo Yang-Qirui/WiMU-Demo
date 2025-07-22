@@ -66,7 +66,7 @@ onMounted(async () => {
   loading.value = true
   error.value = ''
   try {
-    const res = await fetch('/api/devices')
+    const res = await fetch('/devices')
     if (!res.ok) throw new Error('获取设备失败')
     const resData = await res.json()
     if (resData.error) throw new Error(resData.error)
@@ -88,8 +88,8 @@ onMounted(async () => {
 // 修正后的开关方法
 async function onSwitch1(device, newVal) {
   const url = newVal
-    ? `/api/start_sample?target_device_id=${device.name}`
-    : `/api/end_sample?target_device_id=${device.name}`;
+    ? `/start_sample?target_device_id=${device.name}`
+    : `/end_sample?target_device_id=${device.name}`;
   const oldVal = device.is_sampling;
   device.is_sampling = newVal;
   try {
@@ -114,8 +114,8 @@ async function onSwitch1(device, newVal) {
 
 async function onSwitch2(device, newVal) {
   const url = newVal
-    ? `/api/start_inference?target_device_id=${device.name}`
-    : `/api/end_inference?target_device_id=${device.name}`;
+    ? `/start_inference?target_device_id=${device.name}`
+    : `/end_inference?target_device_id=${device.name}`;
   const oldVal = device.is_inference;
   device.is_inference = newVal;
   try {

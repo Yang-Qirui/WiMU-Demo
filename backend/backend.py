@@ -1,9 +1,8 @@
-import os
+import random
 import requests
 import secrets
 import logging
 import json
-import uuid
 import paho.mqtt.client as mqtt
 from flask import Flask, request, jsonify
 
@@ -28,18 +27,15 @@ REQUEST_TOPIC = "devices/inference"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # ========== Flask ==========
-app = Flask(__name__)
+app = Flask(__name__, static_folder='../frontend/dist', static_url_path='/')
 
 # ========== MQTT 客户端 ==========
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=PUBLISHER_CLIENT_ID)
 mqtt_client.username_pw_set(SCRIPT_MQTT_USER, SCRIPT_MQTT_PASS)
 
 # 业务函数映射
-def inference(payload=None):
-    return {"status": "success", "message": "Inference completed."}
-FUNCTION_MAP = {
-    "inference": inference
-}
+def inference(wifi_list, imu_offset, sys_noise, obs_noise):
+    return {"x": 100 * random.random(), "y": 200 * random.random(), "confidence": 5}
 
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
@@ -49,23 +45,25 @@ def on_connect(client, userdata, flags, rc, properties=None):
     else:
         logging.error(f"Failed to connect, return code {rc}")
 
-def on_message(client, msg):
+def on_message(client, userdata, msg):
+    # TODO: Currently, we only support data related to inference to be uploaded to the backend.
     logging.info(f"Received message on topic '{msg.topic}'")
     try:
         data = json.loads(msg.payload.decode())
-        function_to_call = data.get("function")
-        response_topic = data.get("response_topic")
-        payload = data.get("payload")
-        if not all([function_to_call, response_topic, payload]):
-            logging.error("Message missing 'function', 'response_topic', or 'payload'. Ignoring.")
+        # print(data)
+        device_id = data.get("deviceId")
+        wifi_list = data.get("wifiList")
+        imu_offset = data.get("imuOffset")
+        sys_noise = data.get("sysNoise")
+        obs_noise = data.get("obsNoise")
+        if not all([device_id, wifi_list, sys_noise, obs_noise]):
+            logging.error("Message missing 'device_id', 'wifiList', 'sysNoise', or 'obsNoise'. Ignoring.")
             return
-        if function_to_call in FUNCTION_MAP:
-            target_function = FUNCTION_MAP[function_to_call]
-            result = target_function(payload)
-        else:
-            result = {"status": "error", "message": f"Function '{function_to_call}' not found."}
-        response_payload = json.dumps(result)
-        client.publish(response_topic, response_payload)
+        result = inference(wifi_list, imu_offset, sys_noise, obs_noise)
+        result["command"] = "inference_result"
+        result["sender"] = "mqtt_manager"
+        send_command_to_device(device_id, "DIRECT_PUSH", result)
+        # client.publish(f"devices/{device_id}/commands", response_payload, qos=1)
     except Exception as e:
         logging.error(f"Error handling MQTT message: {e}")
 
@@ -228,5 +226,10 @@ def end_inference():
     )
     return jsonify({"message": "结束推理"}), 200
 
+@app.route('/')
+def index():
+    return app.send_static_file('index.html')
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True)
+    app.run(host='0.0.0.0', port=8000, debug=False)
