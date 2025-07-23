@@ -10,10 +10,10 @@ import os
 # upload_meta_collection = db["upload_meta"]
 
 def process_and_save_data(device_id, path_name, data_type, files_dict, save_dir="./data_json"):
-    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(f"{save_dir}/{device_id}/{data_type}", exist_ok=True)
     now = datetime.datetime.now(datetime.timezone.utc)
     timestamp_str = now.strftime("%Y%m%dT%H%M%S%fZ")
-    filename = f"{device_id}_{path_name}_{data_type}_{timestamp_str}.json"
+    filename = f"{timestamp_str}.json"
     filepath = os.path.join(save_dir, filename)
 
     document = {
