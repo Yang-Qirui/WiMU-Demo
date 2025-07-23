@@ -9,6 +9,7 @@ import paho.mqtt.client as mqtt
 from flask import Flask, request, jsonify
 import database
 from threading import Thread
+from filelock import FileLock
 
 # ========== 配置 ==========
 # EMQX HTTP API
@@ -36,6 +37,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # ========== Flask ==========
 app = Flask(__name__, static_folder='../frontend/dist', static_url_path='/')
 app.config['CACHE_FOLDER'] = CACHE_FOLDER
+BATCH_META_FOLDER = os.path.join(CACHE_FOLDER, 'batch_meta')
+os.makedirs(BATCH_META_FOLDER, exist_ok=True)
 
 # ========== MQTT 客户端 ==========
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=PUBLISHER_CLIENT_ID)
@@ -115,6 +118,29 @@ def send_command_to_device(device_id: str, command: str, data: dict):
         mqtt_client.publish(topic, payload, qos=1)
     except Exception as e:
         logging.error(f"An error occurred: {e}", exc_info=True)
+
+def load_batch_meta(batch_id):
+    meta_path = os.path.join(BATCH_META_FOLDER, f"{batch_id}.json")
+    lock_path = meta_path + ".lock"
+    with FileLock(lock_path):
+        if not os.path.exists(meta_path):
+            return None
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+def save_batch_meta(batch_id, meta):
+    meta_path = os.path.join(BATCH_META_FOLDER, f"{batch_id}.json")
+    lock_path = meta_path + ".lock"
+    with FileLock(lock_path):
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+
+def delete_batch_meta(batch_id):
+    meta_path = os.path.join(BATCH_META_FOLDER, f"{batch_id}.json")
+    lock_path = meta_path + ".lock"
+    with FileLock(lock_path):
+        if os.path.exists(meta_path):
+            os.remove(meta_path)
 
 # ========== Flask 路由 ==========
 @app.route('/register', methods=['POST'])
@@ -241,7 +267,7 @@ def index():
 def process_batch(batch_id):
     with app.app_context():
         batch_path = os.path.join(app.config['CACHE_FOLDER'], batch_id)
-        upload_meta = database.upload_meta_collection.find_one({"batch_id": batch_id})
+        upload_meta = load_batch_meta(batch_id)
         print(f"Processing batch: {batch_id}")
         files_dict = {
             "euler.txt": os.path.join(batch_path, "euler.txt"),
@@ -253,7 +279,7 @@ def process_batch(batch_id):
         except Exception as e:
             print(f"Error processing batch: {e}")
         finally:
-            database.upload_meta_collection.delete_one({"batch_id": batch_id})
+            delete_batch_meta(batch_id)
             shutil.rmtree(batch_path)
             print(f"Batch {batch_id} processed successfully")
 
@@ -269,16 +295,16 @@ def upload_data():
     file_path = os.path.join(batch_path, file.filename)
     file.save(file_path)
     print(f"[{batch_id}] {file.filename} uploaded successfully")
-    updated_batch = database.upload_meta_collection.find_one_and_update(
-        {"batch_id": batch_id},
-        {
-            "$addToSet": {
-                "received_files": file.filename
-            },
-        }
-    )
+    # 更新本地meta
+    meta = load_batch_meta(batch_id)
+    if meta is None:
+        return jsonify({"error": "Batch meta not found"}), 400
+    if file.filename not in meta["received_files"]:
+        meta["received_files"].append(file.filename)
+        save_batch_meta(batch_id, meta)
+    updated_batch = meta
 
-    if updated_batch and len(updated_batch.get("received_files", [])) == updated_batch.get("total_files", -1):
+    if updated_batch and len(updated_batch.get("received_files", [])) == int(updated_batch.get("total_files", -1)):
         print(f"Updated batch: {updated_batch}")
         processing_thread = Thread(target=process_batch, args=(batch_id,))
         processing_thread.start()
@@ -304,8 +330,8 @@ def upload_meta():
         "received_files": []
     }
     try:
-        result = database.upload_meta_collection.insert_one(batch_doc)
-        print(f"Meta saved successfully. ID: {result.inserted_id}")
+        save_batch_meta(batch_id, batch_doc)
+        print(f"Meta saved successfully. Batch ID: {batch_id}")
     except Exception as e:
         print(f"Error saving meta: {e}")
     batch_path = os.path.join(app.config['CACHE_FOLDER'], batch_id)
