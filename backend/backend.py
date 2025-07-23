@@ -15,9 +15,9 @@ from filelock import FileLock
 # EMQX HTTP API
 EMQX_HOST = "127.0.0.1"
 EMQX_API_PORT = 18083
-EMQX_API_USER = "2cff38a527697f0c"
-EMQX_API_PASS = "XYG9Ajk9BpOaFTIHyC9BcDCeePDtIVFZasZMZ2ZlRp1C5M"
-EMQX_API_URL = f"http://{EMQX_HOST}:7860/mqttpanel"
+EMQX_API_USER = "b245ef02ba7fa37b"
+EMQX_API_PASS = "UeTqnaFHxPwPk9A52L19AdSDuUbZc9CcrkCnnp1eIJbtAG"
+EMQX_API_URL = f"https://{EMQX_HOST}:29987"
 EMQX_CREATE_USER_ENDPOINT = f"{EMQX_API_URL}/api/v5/authentication/password_based%3Abuilt_in_database/users"
 
 # MQTT Broker
@@ -303,7 +303,6 @@ def upload_data():
         meta["received_files"].append(file.filename)
         save_batch_meta(batch_id, meta)
     updated_batch = meta
-
     if updated_batch and len(updated_batch.get("received_files", [])) == int(updated_batch.get("total_files", -1)):
         print(f"Updated batch: {updated_batch}")
         processing_thread = Thread(target=process_batch, args=(batch_id,))

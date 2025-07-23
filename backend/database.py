@@ -14,7 +14,7 @@ def process_and_save_data(device_id, path_name, data_type, files_dict, save_dir=
     now = datetime.datetime.now(datetime.timezone.utc)
     timestamp_str = now.strftime("%Y%m%dT%H%M%S%fZ")
     filename = f"{timestamp_str}.json"
-    filepath = os.path.join(save_dir, filename)
+    filepath = os.path.join(f"{save_dir}/{device_id}/{data_type}", filename)
 
     document = {
         "device_id": device_id,
