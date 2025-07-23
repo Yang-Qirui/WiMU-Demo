@@ -1,19 +1,26 @@
 import re
-from pymongo import MongoClient
 import datetime
+import json
+import os
 
-client = MongoClient("mongodb://localhost:27017/")
-db = client["wimu_database"]
-recordings_collection = db["recordings"]
-upload_meta_collection = db["upload_meta"]
+# MongoDB相关已移除
+# client = MongoClient("mongodb://localhost:27017/")
+# db = client["wimu_database"]
+# recordings_collection = db["recordings"]
+# upload_meta_collection = db["upload_meta"]
 
-def process_and_save_data(device_id, path_name, data_type, files_dict):
+def process_and_save_data(device_id, path_name, data_type, files_dict, save_dir="./data_json"):
+    os.makedirs(save_dir, exist_ok=True)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    timestamp_str = now.strftime("%Y%m%dT%H%M%S%fZ")
+    filename = f"{device_id}_{path_name}_{data_type}_{timestamp_str}.json"
+    filepath = os.path.join(save_dir, filename)
 
     document = {
         "device_id": device_id,
         "path_name": path_name,
         "data_type": data_type,
-        "create_at": datetime.datetime.now(datetime.timezone.utc),
+        "create_at": now.isoformat(),
         "euler_data": [],
         "step_data": [],
         "wifi_data": []
@@ -50,8 +57,9 @@ def process_and_save_data(device_id, path_name, data_type, files_dict):
                         "rssi": rssi,
                     })
     try:
-        result = recordings_collection.insert_one(document)
-        print(f"Data saved successfully. ID: {result.inserted_id}")
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(document, f, ensure_ascii=False, indent=2)
+        print(f"Data saved successfully. File: {filepath}")
     except Exception as e:
         print(f"Error saving data: {e}")
 
