@@ -1,14 +1,18 @@
+import os
 import random
+import shutil
 import requests
 import secrets
 import logging
 import json
 import paho.mqtt.client as mqtt
 from flask import Flask, request, jsonify
+import database
+from threading import Thread
 
 # ========== 配置 ==========
 # EMQX HTTP API
-EMQX_HOST = "limcpu1.cse.ust.hk"
+EMQX_HOST = "127.0.0.1"
 EMQX_API_PORT = 18083
 EMQX_API_USER = "2cff38a527697f0c"
 EMQX_API_PASS = "XYG9Ajk9BpOaFTIHyC9BcDCeePDtIVFZasZMZ2ZlRp1C5M"
@@ -22,6 +26,9 @@ SCRIPT_MQTT_USER = "wands"
 SCRIPT_MQTT_PASS = "wands123"
 PUBLISHER_CLIENT_ID = f"python-direct-push-script-01"
 REQUEST_TOPIC = "devices/inference"
+
+# Cache Folder
+CACHE_FOLDER = "cache"
 
 # ========== 日志 ==========
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -229,6 +236,80 @@ def end_inference():
 @app.route('/')
 def index():
     return app.send_static_file('index.html')
+
+def process_batch(batch_id):
+    with app.app_context():
+        batch_path = os.path.join(app.config['CACHE_FOLDER'], batch_id)
+        upload_meta = database.upload_meta_collection.find_one({"batch_id": batch_id})
+        print(f"Processing batch: {batch_id}")
+        files_dict = {
+            "euler.txt": os.path.join(batch_path, "euler.txt"),
+            "step.txt": os.path.join(batch_path, "step.txt"),
+            "wifi.txt": os.path.join(batch_path, "wifi.txt")
+        }
+        try:
+            database.process_and_save_data(upload_meta["device_id"], upload_meta["path_name"], upload_meta["data_type"], files_dict)
+        except Exception as e:
+            print(f"Error processing batch: {e}")
+        finally:
+            database.upload_meta_collection.delete_one({"batch_id": batch_id})
+            shutil.rmtree(batch_path)
+            print(f"Batch {batch_id} processed successfully")
+
+@app.route('/upload', methods=['POST'])
+def upload_data():
+    batch_id = request.form.get('batch_id')
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    batch_path = os.path.join(app.config['CACHE_FOLDER'], batch_id)
+    file_path = os.path.join(batch_path, file.filename)
+    file.save(file_path)
+    print(f"[{batch_id}] {file.filename} uploaded successfully")
+    updated_batch = database.upload_meta_collection.find_one_and_update(
+        {"batch_id": batch_id},
+        {
+            "$addToSet": {
+                "received_files": file.filename
+            },
+        }
+    )
+
+    if updated_batch and len(updated_batch.get("received_files", [])) == updated_batch.get("total_files", -1):
+        print(f"Updated batch: {updated_batch}")
+        processing_thread = Thread(target=process_batch, args=(batch_id,))
+        processing_thread.start()
+
+    return jsonify({"message": "File uploaded successfully"}), 200
+
+@app.route('/upload_meta', methods=['POST'])
+def upload_meta():
+    data = request.get_json()
+    batch_id = data.get('batch_id')
+    total_files = data.get('total_files')
+    device_id = data.get('device_id')
+    path_name = data.get('path_name')
+    data_type = data.get('data_type')
+    if not all([batch_id, total_files, device_id, path_name, data_type]):
+        return jsonify({"error": "Missing required fields"}), 400
+    batch_doc = {
+        "batch_id": batch_id,
+        "total_files": total_files,
+        "device_id": device_id,
+        "path_name": path_name,
+        "data_type": data_type,
+        "received_files": []
+    }
+    try:
+        result = database.upload_meta_collection.insert_one(batch_doc)
+        print(f"Meta saved successfully. ID: {result.inserted_id}")
+    except Exception as e:
+        print(f"Error saving meta: {e}")
+    batch_path = os.path.join(app.config['CACHE_FOLDER'], batch_id)
+    os.makedirs(batch_path, exist_ok=True)
+    return jsonify({"message": "Meta uploaded successfully"}), 200
 
 
 if __name__ == '__main__':
