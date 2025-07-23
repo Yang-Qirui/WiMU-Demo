@@ -35,6 +35,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # ========== Flask ==========
 app = Flask(__name__, static_folder='../frontend/dist', static_url_path='/')
+app.config['CACHE_FOLDER'] = CACHE_FOLDER
 
 # ========== MQTT 客户端 ==========
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=PUBLISHER_CLIENT_ID)
