@@ -139,6 +139,9 @@ mqtt_client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
 names = load_device_names()
 names[PUBLISHER_CLIENT_ID] = PUBLISHER_CLIENT_NAME
 save_device_names(names)
+status = load_device_status()
+status[PUBLISHER_CLIENT_ID] = {"is_sampling": False, "is_inference": False}
+save_device_status(status)
 mqtt_client.loop_start()
 
 # ========== 工具函数 ==========
