@@ -28,7 +28,7 @@
         <template #default="{ row }">
           <el-switch :model-value="row.is_sampling"
             @change="val => onSwitch1(row, val)"
-            :loading="!!switchLoading.value[row.deviceId + '_sampling']"
+            :loading="switchLoading.value[row.deviceId + '_sampling']"
             active-color="#2563eb" inactive-color="#bcd0f7" />
         </template>
       </el-table-column>
@@ -36,7 +36,7 @@
         <template #default="{ row }">
           <el-switch :model-value="row.is_inference"
             @change="val => onSwitch2(row, val)"
-            :loading="!!switchLoading.value[row.deviceId + '_inference']"
+            :loading="switchLoading.value[row.deviceId + '_inference']"
             active-color="#2563eb" inactive-color="#bcd0f7" />
         </template>
       </el-table-column>
@@ -47,14 +47,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { ref, onMounted, computed, onUnmounted, reactive } from 'vue'
 
 const data = ref([])
 const loading = ref(false)
 const error = ref('')
 const multipleSelection = ref([])
 let statusTimer = null
-const switchLoading = ref({})
+const switchLoading = reactive({})
 
 const batchSamplingText = computed(() => {
   if (multipleSelection.value.length === 0) return '批量采集';
@@ -118,7 +118,7 @@ onUnmounted(() => {
 // 修正后的开关方法
 async function onSwitch1(device, newVal) {
   const key = device.deviceId + '_sampling'
-  switchLoading.value[key] = true
+  switchLoading[key] = true
   const url = newVal
     ? `/start_sample?target_device_id=${device.deviceId}`
     : `/end_sample?target_device_id=${device.deviceId}`;
@@ -132,13 +132,13 @@ async function onSwitch1(device, newVal) {
   } catch (error) {
     alert(error.message)
   } finally {
-    switchLoading.value[key] = false
+    switchLoading[key] = false
   }
 }
 
 async function onSwitch2(device, newVal) {
   const key = device.deviceId + '_inference'
-  switchLoading.value[key] = true
+  switchLoading[key] = true
   const url = newVal
     ? `/start_inference?target_device_id=${device.deviceId}`
     : `/end_inference?target_device_id=${device.deviceId}`;
@@ -152,7 +152,7 @@ async function onSwitch2(device, newVal) {
   } catch (error) {
     alert(error.message)
   } finally {
-    switchLoading.value[key] = false
+    switchLoading[key] = false
   }
 }
 
