@@ -217,6 +217,11 @@ def register_device():
         names = load_device_names()
         names[device_id] = device_name
         save_device_names(names)
+    # 初始化设备状态
+    status = load_device_status()
+    if device_id not in status:
+        status[device_id] = {"is_sampling": False, "is_inference": False}
+        save_device_status(status)
     logging.info(f"Received registration request for deviceId: {device_id}, deviceName: {device_name}")
     mqtt_username = device_id
     mqtt_password = secrets.token_hex(16)
