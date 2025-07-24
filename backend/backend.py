@@ -25,7 +25,8 @@ MQTT_BROKER_HOST = EMQX_HOST
 MQTT_BROKER_PORT = 1883
 SCRIPT_MQTT_USER = "wands"
 SCRIPT_MQTT_PASS = "wands123"
-PUBLISHER_CLIENT_ID = f"python-direct-push-script-01"
+PUBLISHER_CLIENT_ID = "superuser001"
+PUBLISHER_CLIENT_NAME = "super_publisher"
 REQUEST_TOPICS = ["devices/inference", "devices/ack"]
 
 # Cache Folder
@@ -49,6 +50,34 @@ mqtt_client.username_pw_set(SCRIPT_MQTT_USER, SCRIPT_MQTT_PASS)
 # 业务函数映射
 def inference(wifi_list, imu_offset, sys_noise, obs_noise):
     return {"x": 100 * random.random(), "y": 200 * random.random(), "confidence": 5}
+
+def load_device_status():
+    lock_path = DEVICE_STATUS_FILE + '.lock'
+    with FileLock(lock_path):
+        if not os.path.exists(DEVICE_STATUS_FILE):
+            return {}
+        with open(DEVICE_STATUS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+def save_device_status(status):
+    lock_path = DEVICE_STATUS_FILE + '.lock'
+    with FileLock(lock_path):
+        with open(DEVICE_STATUS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(status, f, ensure_ascii=False, indent=2)
+
+def load_device_names():
+    lock_path = DEVICE_NAME_FILE + '.lock'
+    with FileLock(lock_path):
+        if not os.path.exists(DEVICE_NAME_FILE):
+            return {}
+        with open(DEVICE_NAME_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+def save_device_names(names):
+    lock_path = DEVICE_NAME_FILE + '.lock'
+    with FileLock(lock_path):
+        with open(DEVICE_NAME_FILE, 'w', encoding='utf-8') as f:
+            json.dump(names, f, ensure_ascii=False, indent=2)
 
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
@@ -107,6 +136,9 @@ def on_message(client, userdata, msg):
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 mqtt_client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
+names = load_device_names()
+names[PUBLISHER_CLIENT_ID] = PUBLISHER_CLIENT_NAME
+save_device_names(names)
 mqtt_client.loop_start()
 
 # ========== 工具函数 ==========
@@ -167,34 +199,6 @@ def delete_batch_meta(batch_id):
     with FileLock(lock_path):
         if os.path.exists(meta_path):
             os.remove(meta_path)
-
-def load_device_status():
-    lock_path = DEVICE_STATUS_FILE + '.lock'
-    with FileLock(lock_path):
-        if not os.path.exists(DEVICE_STATUS_FILE):
-            return {}
-        with open(DEVICE_STATUS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-def save_device_status(status):
-    lock_path = DEVICE_STATUS_FILE + '.lock'
-    with FileLock(lock_path):
-        with open(DEVICE_STATUS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(status, f, ensure_ascii=False, indent=2)
-
-def load_device_names():
-    lock_path = DEVICE_NAME_FILE + '.lock'
-    with FileLock(lock_path):
-        if not os.path.exists(DEVICE_NAME_FILE):
-            return {}
-        with open(DEVICE_NAME_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-def save_device_names(names):
-    lock_path = DEVICE_NAME_FILE + '.lock'
-    with FileLock(lock_path):
-        with open(DEVICE_NAME_FILE, 'w', encoding='utf-8') as f:
-            json.dump(names, f, ensure_ascii=False, indent=2)
 
 # ========== Flask 路由 ==========
 @app.route('/register', methods=['POST'])
