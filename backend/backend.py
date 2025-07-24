@@ -31,6 +31,7 @@ REQUEST_TOPICS = ["devices/inference", "devices/ack"]
 # Cache Folder
 CACHE_FOLDER = "cache"
 DEVICE_STATUS_FILE = os.path.join(CACHE_FOLDER, 'device_status.json')
+DEVICE_NAME_FILE = os.path.join(CACHE_FOLDER, 'device_names.json')
 
 # ========== 日志 ==========
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -181,6 +182,20 @@ def save_device_status(status):
         with open(DEVICE_STATUS_FILE, 'w', encoding='utf-8') as f:
             json.dump(status, f, ensure_ascii=False, indent=2)
 
+def load_device_names():
+    lock_path = DEVICE_NAME_FILE + '.lock'
+    with FileLock(lock_path):
+        if not os.path.exists(DEVICE_NAME_FILE):
+            return {}
+        with open(DEVICE_NAME_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+def save_device_names(names):
+    lock_path = DEVICE_NAME_FILE + '.lock'
+    with FileLock(lock_path):
+        with open(DEVICE_NAME_FILE, 'w', encoding='utf-8') as f:
+            json.dump(names, f, ensure_ascii=False, indent=2)
+
 # ========== Flask 路由 ==========
 @app.route('/register', methods=['POST'])
 def register_device():
@@ -189,10 +204,16 @@ def register_device():
         return jsonify({"error": "Invalid request: Content-Type must be application/json"}), 400
     data = request.get_json()
     device_id = data.get('deviceId')
+    device_name = data.get('deviceName')
     if not device_id:
         logging.warning("deviceId is missing from request")
         return jsonify({"error": "Missing 'deviceId' in request body"}), 400
-    logging.info(f"Received registration request for deviceId: {device_id}")
+    # 保存deviceId和deviceName映射
+    if device_name:
+        names = load_device_names()
+        names[device_id] = device_name
+        save_device_names(names)
+    logging.info(f"Received registration request for deviceId: {device_id}, deviceName: {device_name}")
     mqtt_username = device_id
     mqtt_password = secrets.token_hex(16)
     user_payload = {
@@ -229,15 +250,22 @@ def register_device():
         return jsonify({"error": "Could not connect to MQTT management service"}), 503
     response_data = {
         "mqttUsername": mqtt_username,
-        "mqttPassword": mqtt_password
+        "mqttPassword": mqtt_password,
     }
-    logging.info(f"Returning credentials for user: {mqtt_username}")
+    logging.info(f"Returning credentials for user: {mqtt_username}, deviceName: {device_name}")
     return jsonify(response_data), 200
 
 @app.route('/devices', methods=['GET'])
 def get_devices():
     devices = get_all_connected_device_ids()
-    return jsonify(devices), 200
+    names = load_device_names()
+    result = []
+    for device_id in devices:
+        result.append({
+            "deviceId": device_id,
+            "deviceName": names.get(device_id, "")
+        })
+    return jsonify(result), 200
 
 @app.route('/start_sample', methods=['POST'])
 def start_sample():

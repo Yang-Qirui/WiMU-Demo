@@ -22,15 +22,22 @@
     >
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="80" />
-      <el-table-column prop="name" label="设备名" />
+      <el-table-column prop="deviceId" label="设备ID" />
+      <el-table-column prop="deviceName" label="设备名" />
       <el-table-column label="数据采集开关">
         <template #default="{ row }">
-          <el-switch :model-value="row.is_sampling" @change="val => onSwitch1(row, val)" active-color="#2563eb" inactive-color="#bcd0f7" />
+          <el-switch :model-value="row.is_sampling"
+            @change="val => onSwitch1(row, val)"
+            :loading="!!switchLoading.value[row.deviceId + '_sampling']"
+            active-color="#2563eb" inactive-color="#bcd0f7" />
         </template>
       </el-table-column>
       <el-table-column label="定位服务开关">
         <template #default="{ row }">
-          <el-switch :model-value="row.is_inference" @change="val => onSwitch2(row, val)" active-color="#2563eb" inactive-color="#bcd0f7" />
+          <el-switch :model-value="row.is_inference"
+            @change="val => onSwitch2(row, val)"
+            :loading="!!switchLoading.value[row.deviceId + '_inference']"
+            active-color="#2563eb" inactive-color="#bcd0f7" />
         </template>
       </el-table-column>
     </el-table>
@@ -47,6 +54,7 @@ const loading = ref(false)
 const error = ref('')
 const multipleSelection = ref([])
 let statusTimer = null
+const switchLoading = ref({})
 
 const batchSamplingText = computed(() => {
   if (multipleSelection.value.length === 0) return '批量采集';
@@ -69,9 +77,9 @@ async function fetchDeviceStatus() {
     if (!res.ok) return
     const status = await res.json()
     for (const device of data.value) {
-      if (status[device.name]) {
-        device.is_sampling = status[device.name].is_sampling
-        device.is_inference = status[device.name].is_inference
+      if (status[device.deviceId]) {
+        device.is_sampling = status[device.deviceId].is_sampling
+        device.is_inference = status[device.deviceId].is_inference
       }
     }
   } catch (e) {}
@@ -88,7 +96,8 @@ onMounted(async () => {
     for (const [i, device] of resData.entries()) {
       data.value.push({
         id: i + 1,
-        name: device,
+        deviceId: device.deviceId,
+        deviceName: device.deviceName,
         is_sampling : false,
         is_inference : false
       })
@@ -108,38 +117,42 @@ onUnmounted(() => {
 
 // 修正后的开关方法
 async function onSwitch1(device, newVal) {
+  const key = device.deviceId + '_sampling'
+  switchLoading.value[key] = true
   const url = newVal
-    ? `/start_sample?target_device_id=${device.name}`
-    : `/end_sample?target_device_id=${device.name}`;
+    ? `/start_sample?target_device_id=${device.deviceId}`
+    : `/end_sample?target_device_id=${device.deviceId}`;
   try {
     await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_device_id: device.name })
+      body: JSON.stringify({ target_device_id: device.deviceId })
     });
-    // 操作后立即刷新状态
     await fetchDeviceStatus();
   } catch (error) {
-    // 网络错误时不做本地切换，等待下次自动刷新
     alert(error.message)
+  } finally {
+    switchLoading.value[key] = false
   }
 }
 
 async function onSwitch2(device, newVal) {
+  const key = device.deviceId + '_inference'
+  switchLoading.value[key] = true
   const url = newVal
-    ? `/start_inference?target_device_id=${device.name}`
-    : `/end_inference?target_device_id=${device.name}`;
+    ? `/start_inference?target_device_id=${device.deviceId}`
+    : `/end_inference?target_device_id=${device.deviceId}`;
   try {
     await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_device_id: device.name })
+      body: JSON.stringify({ target_device_id: device.deviceId })
     });
-    // 操作后立即刷新状态
     await fetchDeviceStatus();
   } catch (error) {
-    // 网络错误时不做本地切换，等待下次自动刷新
     alert(error.message)
+  } finally {
+    switchLoading.value[key] = false
   }
 }
 
