@@ -40,12 +40,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
 
 const data = ref([])
 const loading = ref(false)
 const error = ref('')
 const multipleSelection = ref([])
+let statusTimer = null
 
 const batchSamplingText = computed(() => {
   if (multipleSelection.value.length === 0) return '批量采集';
@@ -60,6 +61,20 @@ const batchInferenceText = computed(() => {
 
 function handleSelectionChange(val) {
   multipleSelection.value = val
+}
+
+async function fetchDeviceStatus() {
+  try {
+    const res = await fetch('/device_status')
+    if (!res.ok) return
+    const status = await res.json()
+    for (const device of data.value) {
+      if (status[device.name]) {
+        device.is_sampling = status[device.name].is_sampling
+        device.is_inference = status[device.name].is_inference
+      }
+    }
+  } catch (e) {}
 }
 
 onMounted(async () => {
@@ -78,6 +93,8 @@ onMounted(async () => {
         is_inference : false
       })
     }
+    await fetchDeviceStatus()
+    statusTimer = setInterval(fetchDeviceStatus, 2000)
   } catch (e) {
     error.value = e.message
   } finally {
@@ -85,30 +102,26 @@ onMounted(async () => {
   }
 })
 
+onUnmounted(() => {
+  if (statusTimer) clearInterval(statusTimer)
+})
+
 // 修正后的开关方法
 async function onSwitch1(device, newVal) {
   const url = newVal
     ? `/start_sample?target_device_id=${device.name}`
     : `/end_sample?target_device_id=${device.name}`;
-  const oldVal = device.is_sampling;
-  device.is_sampling = newVal;
   try {
-    const response = await fetch(url, {
+    await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target_device_id: device.name })
     });
-    if (!response.ok) {
-      const errorData = await response.json();
-      alert(`操作失败: ${errorData.message || '服务器错误'}`);
-      device.is_sampling = oldVal;
-      return;
-    }
-    const result = await response.json();
-    // alert(`操作成功: ${result.message}`);
+    // 操作后立即刷新状态
+    await fetchDeviceStatus();
   } catch (error) {
-    alert('网络请求失败，请检查网络连接或联系管理员。');
-    device.is_sampling = oldVal;
+    // 网络错误时不做本地切换，等待下次自动刷新
+    alert(error.message)
   }
 }
 
@@ -116,25 +129,17 @@ async function onSwitch2(device, newVal) {
   const url = newVal
     ? `/start_inference?target_device_id=${device.name}`
     : `/end_inference?target_device_id=${device.name}`;
-  const oldVal = device.is_inference;
-  device.is_inference = newVal;
   try {
-    const response = await fetch(url, {
+    await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target_device_id: device.name })
     });
-    if (!response.ok) {
-      const errorData = await response.json();
-      alert(`操作失败: ${errorData.message || '服务器错误'}`);
-      device.is_inference = oldVal;
-      return;
-    }
-    const result = await response.json();
-    // alert(`操作成功: ${result.message}`);
+    // 操作后立即刷新状态
+    await fetchDeviceStatus();
   } catch (error) {
-    alert('网络请求失败，请检查网络连接或联系管理员。');
-    device.is_inference = oldVal;
+    // 网络错误时不做本地切换，等待下次自动刷新
+    alert(error.message)
   }
 }
 

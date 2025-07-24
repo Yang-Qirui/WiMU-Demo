@@ -26,10 +26,11 @@ MQTT_BROKER_PORT = 1883
 SCRIPT_MQTT_USER = "wands"
 SCRIPT_MQTT_PASS = "wands123"
 PUBLISHER_CLIENT_ID = f"python-direct-push-script-01"
-REQUEST_TOPIC = "devices/inference"
+REQUEST_TOPICS = ["devices/inference", "devices/ack"]
 
 # Cache Folder
 CACHE_FOLDER = "cache"
+DEVICE_STATUS_FILE = os.path.join(CACHE_FOLDER, 'device_status.json')
 
 # ========== 日志 ==========
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -51,32 +52,56 @@ def inference(wifi_list, imu_offset, sys_noise, obs_noise):
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
         logging.info("Successfully connected to MQTT Broker!")
-        client.subscribe(REQUEST_TOPIC)
-        logging.info(f"Subscribed to topic: {REQUEST_TOPIC}")
+        for topic in REQUEST_TOPICS:
+            client.subscribe(topic)
+            logging.info(f"Subscribed to topic: {topic}")
     else:
         logging.error(f"Failed to connect, return code {rc}")
 
 def on_message(client, userdata, msg):
     # TODO: Currently, we only support data related to inference to be uploaded to the backend.
     logging.info(f"Received message on topic '{msg.topic}'")
-    try:
-        data = json.loads(msg.payload.decode())
-        # print(data)
-        device_id = data.get("deviceId")
-        wifi_list = data.get("wifiList")
-        imu_offset = data.get("imuOffset")
-        sys_noise = data.get("sysNoise")
-        obs_noise = data.get("obsNoise")
-        if not all([device_id, wifi_list, sys_noise, obs_noise]):
-            logging.error("Message missing 'device_id', 'wifiList', 'sysNoise', or 'obsNoise'. Ignoring.")
-            return
-        result = inference(wifi_list, imu_offset, sys_noise, obs_noise)
-        result["command"] = "inference_result"
-        result["sender"] = "mqtt_manager"
-        send_command_to_device(device_id, "DIRECT_PUSH", result)
-        # client.publish(f"devices/{device_id}/commands", response_payload, qos=1)
-    except Exception as e:
-        logging.error(f"Error handling MQTT message: {e}")
+    if msg.topic == "devices/ack":
+        try:
+            data = json.loads(msg.payload.decode())
+            # Kotlin端ack消息格式: {"deviceId": ..., "ackInfo": ...}
+            device_id = data.get("deviceId")
+            ack_info = data.get("ackInfo")
+            if device_id is not None and ack_info is not None:
+                status = load_device_status()
+                if device_id not in status:
+                    status[device_id] = {"is_sampling": False, "is_inference": False}
+                if ack_info == "sample_on":
+                    status[device_id]["is_sampling"] = True
+                elif ack_info == "sample_off":
+                    status[device_id]["is_sampling"] = False
+                elif ack_info == "inference_on":
+                    status[device_id]["is_inference"] = True
+                elif ack_info == "inference_off":
+                    status[device_id]["is_inference"] = False
+                save_device_status(status)
+                logging.info(f"Device {device_id} status updated: {status[device_id]}")
+        except Exception as e:
+            logging.error(f"Error handling ack message: {e}")
+    if msg.topic == "devices/inference":
+        try:
+            data = json.loads(msg.payload.decode())
+            # print(data)
+            device_id = data.get("deviceId")
+            wifi_list = data.get("wifiList")
+            imu_offset = data.get("imuOffset")
+            sys_noise = data.get("sysNoise")
+            obs_noise = data.get("obsNoise")
+            if not all([device_id, wifi_list, sys_noise, obs_noise]):
+                logging.error("Message missing 'device_id', 'wifiList', 'sysNoise', or 'obsNoise'. Ignoring.")
+                return
+            result = inference(wifi_list, imu_offset, sys_noise, obs_noise)
+            result["command"] = "inference_result"
+            result["sender"] = "mqtt_manager"
+            send_command_to_device(device_id, "DIRECT_PUSH", result)
+            # client.publish(f"devices/{device_id}/commands", response_payload, qos=1)
+        except Exception as e:
+            logging.error(f"Error handling MQTT message: {e}")
 
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
@@ -141,6 +166,20 @@ def delete_batch_meta(batch_id):
     with FileLock(lock_path):
         if os.path.exists(meta_path):
             os.remove(meta_path)
+
+def load_device_status():
+    lock_path = DEVICE_STATUS_FILE + '.lock'
+    with FileLock(lock_path):
+        if not os.path.exists(DEVICE_STATUS_FILE):
+            return {}
+        with open(DEVICE_STATUS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+def save_device_status(status):
+    lock_path = DEVICE_STATUS_FILE + '.lock'
+    with FileLock(lock_path):
+        with open(DEVICE_STATUS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(status, f, ensure_ascii=False, indent=2)
 
 # ========== Flask 路由 ==========
 @app.route('/register', methods=['POST'])
@@ -259,6 +298,11 @@ def end_inference():
         }
     )
     return jsonify({"message": "结束推理"}), 200
+
+@app.route('/device_status', methods=['GET'])
+def get_device_status():
+    status = load_device_status()
+    return jsonify(status)
 
 @app.route('/')
 def index():
