@@ -100,15 +100,15 @@ def on_message(client, userdata, msg):
             if device_id is not None and ack_info is not None:
                 status = load_device_status()
                 if device_id not in status:
-                    status[device_id] = {"is_sampling": False, "is_inference": False}
+                    status[device_id] = {"is_sampling": 0, "is_inference": 0}
                 if ack_info == "sample_on":
-                    status[device_id]["is_sampling"] = True
+                    status[device_id]["is_sampling"] = 1
                 elif ack_info == "sample_off":
-                    status[device_id]["is_sampling"] = False
+                    status[device_id]["is_sampling"] = 0
                 elif ack_info == "inference_on":
-                    status[device_id]["is_inference"] = True
+                    status[device_id]["is_inference"] = 1
                 elif ack_info == "inference_off":
-                    status[device_id]["is_inference"] = False
+                    status[device_id]["is_inference"] = 0
                 save_device_status(status)
                 logging.info(f"Device {device_id} status updated: {status[device_id]}")
         except Exception as e:
@@ -140,7 +140,7 @@ names = load_device_names()
 names[PUBLISHER_CLIENT_ID] = PUBLISHER_CLIENT_NAME
 save_device_names(names)
 status = load_device_status()
-status[PUBLISHER_CLIENT_ID] = {"is_sampling": False, "is_inference": False}
+status[PUBLISHER_CLIENT_ID] = {"is_sampling": -1, "is_inference": -1} # -1 表示不支持该功能
 save_device_status(status)
 mqtt_client.loop_start()
 
@@ -223,7 +223,7 @@ def register_device():
     # 初始化设备状态
     status = load_device_status()
     if device_id not in status:
-        status[device_id] = {"is_sampling": False, "is_inference": False}
+        status[device_id] = {"is_sampling": 0, "is_inference": 0}
         save_device_status(status)
     logging.info(f"Received registration request for deviceId: {device_id}, deviceName: {device_name}")
     mqtt_username = device_id

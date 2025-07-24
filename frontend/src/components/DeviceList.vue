@@ -26,17 +26,19 @@
       <el-table-column prop="deviceName" label="设备名" />
       <el-table-column label="数据采集开关">
         <template #default="{ row }">
-          <el-switch :model-value="row.is_sampling"
+          <el-switch :model-value="row.is_sampling === 1"
             @change="val => onSwitch1(row, val)"
-            :loading="switchLoading.value[row.deviceId + '_sampling']"
+            :loading="switchLoading[row.deviceId + '_sampling']"
+            :disabled="row.is_sampling === -1"
             active-color="#2563eb" inactive-color="#bcd0f7" />
         </template>
       </el-table-column>
       <el-table-column label="定位服务开关">
         <template #default="{ row }">
-          <el-switch :model-value="row.is_inference"
+          <el-switch :model-value="row.is_inference === 1"
             @change="val => onSwitch2(row, val)"
-            :loading="switchLoading.value[row.deviceId + '_inference']"
+            :loading="switchLoading[row.deviceId + '_inference']"
+            :disabled="row.is_inference === -1"
             active-color="#2563eb" inactive-color="#bcd0f7" />
         </template>
       </el-table-column>
@@ -119,6 +121,11 @@ onUnmounted(() => {
 async function onSwitch1(device, newVal) {
   const key = device.deviceId + '_sampling'
   switchLoading[key] = true
+  // 只允许0/1时切换
+  if (device.is_sampling === -1) {
+    switchLoading[key] = false
+    return
+  }
   const url = newVal
     ? `/start_sample?target_device_id=${device.deviceId}`
     : `/end_sample?target_device_id=${device.deviceId}`;
@@ -139,6 +146,10 @@ async function onSwitch1(device, newVal) {
 async function onSwitch2(device, newVal) {
   const key = device.deviceId + '_inference'
   switchLoading[key] = true
+  if (device.is_inference === -1) {
+    switchLoading[key] = false
+    return
+  }
   const url = newVal
     ? `/start_inference?target_device_id=${device.deviceId}`
     : `/end_inference?target_device_id=${device.deviceId}`;
