@@ -54,9 +54,15 @@ os.makedirs(BATCH_META_FOLDER, exist_ok=True)
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=PUBLISHER_CLIENT_ID)
 mqtt_client.username_pw_set(SCRIPT_MQTT_USER, SCRIPT_MQTT_PASS)
 
+last_loc = (0, 0)
 # 业务函数映射
 def inference(wifi_list, imu_offset, sys_noise, obs_noise):
-    return {"x": 100 * random.random(), "y": 200 * random.random(), "confidence": 5}
+    if imu_offset is None:
+        return {"x": 0, "y": 0, "confidence": 5}
+    else:
+        global last_loc
+        last_loc = (last_loc[0] + imu_offset[0], last_loc[1] + imu_offset[1])
+        return {"x": last_loc[0], "y": last_loc[1], "confidence": 5}
 
 def load_device_status():
     lock_path = DEVICE_STATUS_FILE + '.lock'
