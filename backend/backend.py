@@ -61,7 +61,7 @@ def inference(wifi_list, imu_offset, sys_noise, obs_noise):
         return {"x": 0, "y": 0, "confidence": 5}
     else:
         global last_loc
-        last_loc = (last_loc[0] + imu_offset[0], last_loc[1] + imu_offset[1])
+        last_loc = (last_loc[0] + imu_offset['first'], last_loc[1] + imu_offset['second'])
         return {"x": last_loc[0], "y": last_loc[1], "confidence": 5}
 
 def load_device_status():
