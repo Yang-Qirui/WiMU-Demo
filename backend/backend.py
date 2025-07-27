@@ -35,7 +35,14 @@ DEVICE_STATUS_FILE = os.path.join(CACHE_FOLDER, 'device_status.json')
 DEVICE_NAME_FILE = os.path.join(CACHE_FOLDER, 'device_names.json')
 
 # ========== 日志 ==========
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # 如果日志消息中包含 "GET /device_status"，则返回 False
+        # record.getMessage() 会获取完整的日志字符串
+        return "GET /device_status" not in record.getMessage()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.addFilter(HealthCheckFilter())
 
 # ========== Flask ==========
 app = Flask(__name__, static_folder='../frontend/dist', static_url_path='/')
