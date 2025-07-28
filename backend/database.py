@@ -43,7 +43,7 @@ def process_and_save_data(device_id, path_name, data_type, files_dict, save_dir=
                     "timestamp": timestamp,
                 })
     if "wifi.txt" in files_dict:
-        regex_xy = r"-?\d+(\.\d+)?,\s*-?\d+(\.\d+)?"
+        regex_xy = r'(-?\d+(?:\.\d+)?)' + r',\s*' + r'(-?\d+(?:\.\d+)?)'
         regex_wifi = r"^(\d+)\s+(.*?)\s+((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})\s+(\d+)\s+(-?\d+)$"
         with open(files_dict["wifi.txt"], "r") as f:
             for line in f:
