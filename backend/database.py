@@ -43,12 +43,20 @@ def process_and_save_data(device_id, path_name, data_type, files_dict, save_dir=
                     "timestamp": timestamp,
                 })
     if "wifi.txt" in files_dict:
-        regex = r"^(\d+)\s+(.*?)\s+((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})\s+(\d+)\s+(-?\d+)$"
+        regex_xy = r"^(-?\d+\.?\d*),(-?\d+\.?\d*)$"
+        regex_wifi = r"^(\d+)\s+(.*?)\s+((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})\s+(\d+)\s+(-?\d+)$"
         with open(files_dict["wifi.txt"], "r") as f:
             for line in f:
-                match = re.match(regex, line)
-                if match:
-                    timestamp, ssid, mac, rssi, channel = match.groups()
+                match_xy = re.match(regex_xy, line)
+                match_wifi = re.match(regex_wifi, line)
+                if match_xy:
+                    x, y = match_xy.groups()
+                    document["groundtruth"] = {
+                        "x": float(x),
+                        "y": float(y)
+                    }
+                elif match_wifi:
+                    timestamp, ssid, mac, rssi, channel = match_wifi.groups()
                     document["wifi_data"].append({
                         "timestamp": timestamp,
                         "ssid": ssid,
