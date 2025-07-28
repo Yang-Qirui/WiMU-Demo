@@ -11,7 +11,7 @@ import os
 
 def process_and_save_data(device_id, path_name, data_type, files_dict, save_dir="./data_json"):
     os.makedirs(f"{save_dir}/{device_id}/{data_type}", exist_ok=True)
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))) # 东八区
     timestamp_str = now.strftime("%Y%m%dT%H%M%S%fZ")
     filename = f"{timestamp_str}.json"
     filepath = os.path.join(f"{save_dir}/{device_id}/{data_type}", filename)
@@ -43,7 +43,7 @@ def process_and_save_data(device_id, path_name, data_type, files_dict, save_dir=
                     "timestamp": timestamp,
                 })
     if "wifi.txt" in files_dict:
-        regex_xy = r"^(-?\d+\.?\d*),(-?\d+\.?\d*)$"
+        regex_xy = r"-?\d+(\.\d+)?,-?\d+(\.\d+)?"
         regex_wifi = r"^(\d+)\s+(.*?)\s+((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})\s+(\d+)\s+(-?\d+)$"
         with open(files_dict["wifi.txt"], "r") as f:
             for line in f:
