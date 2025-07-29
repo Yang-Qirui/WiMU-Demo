@@ -12,6 +12,7 @@ import threading
 from collections import defaultdict
 from datetime import datetime
 from model import *
+from torch_geometric.nn import GAE
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
