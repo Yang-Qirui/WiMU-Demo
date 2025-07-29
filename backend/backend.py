@@ -10,6 +10,8 @@ from flask import Flask, request, jsonify
 import database
 from threading import Thread
 from filelock import FileLock
+import inference_service
+
 
 # ========== 配置 ==========
 # EMQX HTTP API
@@ -54,15 +56,50 @@ os.makedirs(BATCH_META_FOLDER, exist_ok=True)
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=PUBLISHER_CLIENT_ID)
 mqtt_client.username_pw_set(SCRIPT_MQTT_USER, SCRIPT_MQTT_PASS)
 
-last_loc = (0, 0)
 # 业务函数映射
-def inference(wifi_list, imu_offset, sys_noise, obs_noise):
-    if imu_offset is None:
-        return {"x": 0, "y": 0, "confidence": 5}
-    else:
-        global last_loc
-        last_loc = (last_loc[0] + imu_offset['first'], last_loc[1] + imu_offset['second'])
-        return {"x": last_loc[0], "y": last_loc[1], "confidence": 5}
+def inference(device_id, wifi_list, imu_offset, sys_noise, obs_noise):
+    """调用inference_service进行推理"""
+    try:
+        # 转换WiFi数据格式
+        wifi_entries = []
+        for wifi_record in wifi_list:
+            # 解析WiFi记录格式: "timestamp ssid bssid channel rssi"
+            parts = wifi_record.split()
+            if len(parts) >= 5:
+                timestamp, ssid, bssid, channel, rssi = parts[:5]
+                wifi_entries.append({
+                    "bssid": bssid,
+                    "ssid": ssid,
+                    "frequency": channel,
+                    "rssi": int(rssi)
+                })
+        
+        # 准备推理数据
+        inference_data = {
+            "device_id": device_id,
+            "wifi_entries": wifi_entries,
+            "dx": imu_offset.get('first', 0) if imu_offset else 0,
+            "dy": imu_offset.get('second', 0) if imu_offset else 0,
+            "system_noise": sys_noise,
+            "obs_noise": obs_noise
+        }
+        
+        # 调用inference_service的推理函数
+        result = inference_service.inference_with_pf(inference_data)
+        
+        if "error" in result:
+            logging.error(f"Inference error: {result['error']}")
+            return {"x": 0, "y": 0, "confidence": 0}
+        
+        return {
+            "x": result["x"],
+            "y": result["y"], 
+            "confidence": 5
+        }
+        
+    except Exception as e:
+        logging.error(f"Error in inference function: {e}")
+        return {"x": 0, "y": 0, "confidence": 0}
 
 def load_device_status():
     lock_path = DEVICE_STATUS_FILE + '.lock'
@@ -138,7 +175,7 @@ def on_message(client, userdata, msg):
             if not all([device_id, wifi_list, sys_noise, obs_noise]):
                 logging.error("Message missing 'device_id', 'wifiList', 'sysNoise', or 'obsNoise'. Ignoring.")
                 return
-            result = inference(wifi_list, imu_offset, sys_noise, obs_noise)
+            result = inference(device_id, wifi_list, imu_offset, sys_noise, obs_noise)
             result["command"] = "inference_result"
             result["sender"] = "mqtt_manager"
             send_command_to_device(device_id, "DIRECT_PUSH", result)
@@ -356,6 +393,42 @@ def end_inference():
 def get_device_status():
     status = load_device_status()
     return jsonify(status)
+
+@app.route('/inference_health', methods=['GET'])
+def get_inference_health():
+    """获取推理服务健康状态"""
+    health_status = inference_service.get_health_status()
+    return jsonify(health_status)
+
+@app.route('/particle_filters', methods=['GET'])
+def get_particle_filters():
+    """获取所有粒子滤波器状态"""
+    filters_status = inference_service.get_particle_filter_status()
+    return jsonify(filters_status)
+
+@app.route('/reset_particle_filter', methods=['POST'])
+def reset_particle_filter():
+    """重置指定设备的粒子滤波器"""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Content-Type must be application/json"}), 400
+        
+        data = request.get_json()
+        device_id = data.get('device_id')
+        
+        if not device_id:
+            return jsonify({"error": "Missing device_id"}), 400
+        
+        result = inference_service.reset_particle_filter(device_id, data)
+        
+        if "error" in result:
+            return jsonify(result), 400
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logging.error(f"Error in reset_particle_filter endpoint: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/')
 def index():

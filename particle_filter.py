@@ -108,58 +108,7 @@ def load_geojson(file_path, ref_point1, ref_point2, ref_pixel1, ref_pixel2):
     
 #     return is_in_target
 
-class TorchParticleFilter:
-    def __init__(self, num_particles=1000, device='cuda'):
-        self.device = device
-        self.num_particles = num_particles
-        
-        # 粒子张量 [N, 3] (x, y, weight)
-        self.particles = torch.empty((num_particles, 3), 
-                                   device=device, dtype=torch.float32)
-    
-    def reset(self, init_observation, obs_noise_scale=3.0):
-        self.particles[:, 0] = torch.rand(self.num_particles, device=self.device) * obs_noise_scale + init_observation[0]
-        self.particles[:, 1] = torch.rand(self.num_particles, device=self.device) * obs_noise_scale + init_observation[1]
-        self.particles[:, 2] = 1.0 / self.num_particles
 
-    def update(self, observation, system_input, system_noise_scale=1.0, obs_noise_scale=3.0):
-        # 预测步骤
-        self.particles[:, 0] += system_input[0] # x方向位移
-        self.particles[:, 1] += system_input[1]
-        self.particles[:, :2] += torch.randn_like(self.particles[:, :2]) * system_noise_scale
-        
-        # 更新权重
-        obs_tensor = torch.tensor(observation, device=self.device)
-        diff = self.particles[:, :2] - obs_tensor
-        squared_dist = (diff**2).sum(dim=1)
-        self.particles[:, 2] = torch.exp(-squared_dist / (2 * obs_noise_scale**2))
-        
-        # 归一化
-        total_weight = self.particles[:, 2].sum()
-        if total_weight < 1e-10:
-            self.particles[:, 2] = 1.0 / self.num_particles
-        else:
-            self.particles[:, 2] /= total_weight
-        
-        # 重采样
-        self.resample()
-
-    def resample(self):
-        cumulative_weights = torch.cumsum(self.particles[:, 2], dim=0)
-        cumulative_weights[-1] = 1.0  # 确保最后一个累积和为1
-        
-        step = 1.0 / self.num_particles
-        u = (torch.arange(self.num_particles, device=self.device) * step +
-            torch.rand(1, device=self.device) * step)
-        
-        indices = torch.searchsorted(cumulative_weights, u)
-        self.particles = self.particles[indices]
-        self.particles[:, 2] = 1.0 / self.num_particles
-
-    @property
-    def estimate(self):
-        return (self.particles[:, :2] * self.particles[:, 2].unsqueeze(-1)).sum(dim=0)
-    
 if __name__ == "__main__":
     # 测试参数
     num_particles = 100_000

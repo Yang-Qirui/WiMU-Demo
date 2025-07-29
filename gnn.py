@@ -57,7 +57,6 @@ class MLPDecoder(nn.Module):
         return torch.sigmoid(self.fc2(torch.relu(self.fc1(pair)))).squeeze()
         # return torch.clamp(self.fc2(torch.relu(self.fc1(pair))), min=0, max=1).squeeze()
 
-
 class MyMLP(nn.Module):
     def __init__(self, in_channel, out_channel):
         super(MyMLP, self).__init__()

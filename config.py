@@ -10,4 +10,4 @@ REAL_WIDTH = 316.33
 # LDPL mode
 LDPL_MODE = 'jd'
 
-JD_MODE = False
+JD_MODE = True

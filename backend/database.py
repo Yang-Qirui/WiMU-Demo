@@ -56,7 +56,7 @@ def process_and_save_data(device_id, path_name, data_type, files_dict, save_dir=
                         "y": float(y)
                     }
                 elif match_wifi:
-                    timestamp, ssid, mac, rssi, channel = match_wifi.groups()
+                    timestamp, ssid, mac, channel, rssi = match_wifi.groups()
                     document["wifi_data"].append({
                         "timestamp": timestamp,
                         "ssid": ssid,

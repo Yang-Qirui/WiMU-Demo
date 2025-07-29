@@ -468,7 +468,7 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
     
     # Process files
     euler_file = os.path.join(dir_path, 'euler.txt')
-    step_file = os.path.join(dir_path, 'single_step.txt')
+    step_file = os.path.join(dir_path, 'single_step_rec.txt')
     wifi_records = process_wifi(os.path.join(dir_path, 'wifi.txt'))
     
     euler = process_euler(euler_file)
@@ -664,7 +664,7 @@ def merge_similar_aps(aps_dict):
     for bssid, info in sorted_aps.items():
         # Get the prefix (first 11 characters of MAC address)
         
-        prefix = bssid[:17]
+        prefix = bssid[:16]
         
         # Check if we've seen this prefix before
         if prefix in merged_aps:
@@ -937,14 +937,14 @@ if __name__ == "__main__":
     with open(sampling_counter_path, 'w') as f:
         json.dump(sampling_counter_dict, f, indent=4)
     
-    ap_unions = process_all("data/mobisys_merge/unlabeled")
-    training_coors = process_waypoints(is_training=True, data_path="data/mobisys_merge/train")
-    testing_coors = process_waypoints(is_training=False, data_path="data/mobisys_merge/test")
+    ap_unions = process_all("data/JD_large_scale_test/unlabeled")
+    training_coors = process_waypoints(is_training=True, data_path="data/JD_large_scale_test/train")
+    testing_coors = process_waypoints(is_training=False, data_path="data/JD_large_scale_test/test")
     training_pos_range = torch.max(training_coors, dim=0)[0] - torch.min(training_coors, dim=0)[0]
     # training_pos_range = torch.tensor([20.6, 81])
     training_pos_min = torch.min(training_coors, dim=0)[0]
     # training_pos_min = torch.tensor([8.4, -33])
-    process_directory_for_steps("data/mobisys_merge/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
+    process_directory_for_steps("data/JD_large_scale_test/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
     end_time = time.time()
     total_time = end_time - start_time
     logger.info(f"Total execution time: {total_time:.2f} seconds")

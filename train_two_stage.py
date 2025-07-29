@@ -34,11 +34,13 @@ def pre_train(args):
     
     A = np.load("./output/data_process/ap_mean.npy")
     A = np.nan_to_num(A, nan=0.0, posinf=0.0, neginf=0.0)
+    # print(A.shape)
+    # assert 0
     mask = A == 0
     min_val, max_val = np.min(A[~mask]), np.max(A[~mask])
     A[~mask] = (A[~mask] - min_val) / (max_val - min_val)
     mask = A == 0
-    k = 1
+    k = 10
     A[~mask] = 1 + np.tanh(-k * A[~mask])
     A = prune_adjacency_topk_min(A, k=20)
     # np.fill_diagonal(A, 1)
@@ -420,7 +422,7 @@ def fine_tune(args):
                 train_real_coor = _train_rp_coors[i] * rp_pos_range + rp_pos_min
                 predict_real_coor = predict_coors[i] * rp_pos_range + rp_pos_min
                 train_errors.append((f"[{train_real_coor[0]}, {train_real_coor[1]}]-[{predict_real_coor[0]}, {predict_real_coor[1]}]-[{predict_coors[i][0]}, {predict_coors[i][1]}]", _err.item()))            # Combined loss
-            loss = alpha * loc_loss # + recon_loss # + l1_reg
+            loss = alpha * loc_loss + recon_loss # + l1_reg
             
             # print(f"loss: {loss.item()}, recon_loss: {recon_loss.item()}, loc_loss: {loc_loss.item()}, l1_reg: {l1_reg.item()}")
             # Backward pass
@@ -633,7 +635,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--save_dir", help="save directory", default="output", type=str)
     arg_parser.add_argument("--l1_lambda", help="L1 regularization strength", default=1e-5, type=float)
     arg_parser.add_argument("--alpha", help="alpha for location loss", default=10, type=float)
-    arg_parser.add_argument("--beta", help="beta for relative localization loss", default=1, type=float)
+    arg_parser.add_argument("--beta", help="beta for relative localization loss", default=10, type=float)
 
     args = arg_parser.parse_args()
     os.makedirs(f"./{args.save_dir}", exist_ok=True)
