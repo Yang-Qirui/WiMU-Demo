@@ -154,7 +154,7 @@ def inference_with_pf(data):
     # 4. 检查IMU数据
     if data.get('dx', 0) == 0 and data.get('dy', 0) == 0:
         # 没有IMU数据，重置粒子滤波器
-        logger.info(f"No IMU data for device {device_id}, resetting particle filter")
+        logger.info(f"No IMU data for device {device_id}, resetting particle filter for {predict}")
         pf.reset(predict, data.get('obs_noise', 3.0))
         update_device_pf_time(device_id)
         return {"x": predict[0], "y": predict[1]}
