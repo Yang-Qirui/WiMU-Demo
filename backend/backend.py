@@ -64,9 +64,10 @@ def inference(device_id, wifi_list, imu_offset, sys_noise, obs_noise):
         wifi_entries = []
         for wifi_record in wifi_list:
             # 解析WiFi记录格式: "timestamp ssid bssid channel rssi"
-            parts = wifi_record.split()
-            if len(parts) >= 5:
-                timestamp, ssid, bssid, channel, rssi = parts[:5]
+            regex_wifi = r"^(\d+)\s+(.*?)\s+((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})\s+(\d+)\s+(-?\d+)$"
+            match_wifi = re.match(regex_wifi, wifi_record)
+            if match_wifi:
+                timestamp, ssid, bssid, channel, rssi = match_wifi.groups()
                 wifi_entries.append({
                     "bssid": bssid,
                     "ssid": ssid,
