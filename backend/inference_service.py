@@ -18,6 +18,7 @@ from particle_filter import *
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+LDPL_MODE = 'jd'
 
 # 设置设备
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -45,6 +46,31 @@ device_pfs: Dict[str, TorchParticleFilter] = {}
 device_last_update: Dict[str, float] = {}
 PF_TIMEOUT = 10.0  # 10秒超时
 lock = threading.Lock()
+
+def LDPL(rssi, band='5G', r0_5g=30, r0_2g=40, n_5g=2.5, n_2g=2.5, mode='default'):
+    """
+    Log-Distance Path Loss model for different frequency bands
+    
+    Args:
+        rssi: Received signal strength in dBm
+        band: Frequency band, '5G' or '2.4G'
+        r0_5g: Reference distance for 5GHz in dBm
+        r0_2g: Reference distance for 2.4GHz in dBm
+        n_5g: Path loss exponent for 5GHz
+        n_2g: Path loss exponent for 2.4GHz
+        mode: 'default' or 'jd'
+    """
+    if mode == 'default':
+        if band == '5G':
+            return np.power(10, (-rssi - r0_5g) / (10 * n_5g))
+        else:  # 2.4G
+            return np.power(10, (-rssi - r0_2g) / (10 * n_2g))
+    elif mode == 'jd':
+        if band == '5G':
+            return np.power(10, (-rssi - 21) / 33)
+            
+        else:  # 2.4G
+            return np.power(10, (-rssi - 27) / 33)
 
 def wifi_inference(data):
     """WiFi推理函数"""

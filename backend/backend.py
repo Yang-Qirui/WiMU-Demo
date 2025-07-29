@@ -68,7 +68,7 @@ def inference(device_id, wifi_list, imu_offset, sys_noise, obs_noise):
             match_wifi = re.match(regex_wifi, wifi_record)
             if match_wifi:
                 timestamp, ssid, bssid, channel, rssi = match_wifi.groups()
-                print(timestamp, ssid, bssid, channel, rssi)
+                # print(timestamp, ssid, bssid, channel, rssi)
                 wifi_entries.append({
                     "bssid": bssid,
                     "ssid": ssid,
