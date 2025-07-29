@@ -11,7 +11,7 @@ from typing import Dict, Optional, Tuple
 import threading
 from collections import defaultdict
 from datetime import datetime
-from ..gnn import *
+from model import *
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
