@@ -11,7 +11,7 @@ import database
 from threading import Thread
 from filelock import FileLock
 import inference_service
-
+import re
 
 # ========== 配置 ==========
 # EMQX HTTP API
