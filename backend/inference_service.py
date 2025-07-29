@@ -36,7 +36,7 @@ pos_range = norm_params['pos_range'].to(device)
 pos_min = norm_params['pos_min'].to(device)
 
 # Load AP mapping
-with open("./params/ap_union.json", 'r') as f:
+with open("./params/ap_unions.json", 'r') as f:
     ap_mapping = json.load(f)
 
 # 设备粒子滤波器管理
