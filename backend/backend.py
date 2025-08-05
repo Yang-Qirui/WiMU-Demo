@@ -35,6 +35,8 @@ REQUEST_TOPICS = ["devices/inference", "devices/ack"]
 CACHE_FOLDER = "cache"
 DEVICE_STATUS_FILE = os.path.join(CACHE_FOLDER, 'device_status.json')
 DEVICE_NAME_FILE = os.path.join(CACHE_FOLDER, 'device_names.json')
+DEVICE_PATHS_FOLDER = os.path.join(CACHE_FOLDER, 'device_paths')
+os.makedirs(DEVICE_PATHS_FOLDER, exist_ok=True)
 
 # ========== 日志 ==========
 class HealthCheckFilter(logging.Filter):
@@ -93,10 +95,17 @@ def inference(device_id, wifi_list, imu_offset, sys_noise, obs_noise):
             logging.error(f"Inference error: {result['error']}")
             return {"x": 0, "y": 0, "confidence": 0}
         
+        # 保存设备路径
+        x_coord = result["x"]
+        y_coord = result["y"]
+        confidence = 5  # 默认置信度
+        save_device_path(device_id, x_coord, y_coord, confidence=confidence)
+        logging.info(f"Saved path for device {device_id}: ({x_coord}, {y_coord})")
+        
         return {
-            "x": result["x"],
-            "y": result["y"], 
-            "confidence": 5
+            "x": x_coord,
+            "y": y_coord, 
+            "confidence": confidence
         }
         
     except Exception as e:
@@ -130,6 +139,45 @@ def save_device_names(names):
     with FileLock(lock_path):
         with open(DEVICE_NAME_FILE, 'w', encoding='utf-8') as f:
             json.dump(names, f, ensure_ascii=False, indent=2)
+
+def load_device_paths(device_id):
+    """加载设备的路径历史"""
+    device_path_file = os.path.join(DEVICE_PATHS_FOLDER, f'{device_id}_paths.json')
+    lock_path = device_path_file + '.lock'
+    with FileLock(lock_path):
+        if not os.path.exists(device_path_file):
+            return []
+        with open(device_path_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+def save_device_path(device_id, x, y, timestamp=None, confidence=None):
+    """保存设备的路径点"""
+    import time
+    if timestamp is None:
+        timestamp = int(time.time() * 1000)  # 毫秒时间戳
+    
+    device_path_file = os.path.join(DEVICE_PATHS_FOLDER, f'{device_id}_paths.json')
+    lock_path = device_path_file + '.lock'
+    
+    with FileLock(lock_path):
+        # 加载现有路径
+        paths = []
+        if os.path.exists(device_path_file):
+            with open(device_path_file, 'r', encoding='utf-8') as f:
+                paths = json.load(f)
+        
+        # 添加新路径点
+        path_point = {
+            "timestamp": timestamp,
+            "x": float(x),
+            "y": float(y),
+            "confidence": confidence if confidence is not None else 0
+        }
+        paths.append(path_point)
+        
+        # 保存回文件
+        with open(device_path_file, 'w', encoding='utf-8') as f:
+            json.dump(paths, f, ensure_ascii=False, indent=2)
 
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
@@ -396,6 +444,54 @@ def end_inference():
 def get_device_status():
     status = load_device_status()
     return jsonify(status)
+
+@app.route('/device_paths', methods=['GET'])
+def get_device_paths():
+    """获取所有设备的路径历史"""
+    device_id = request.args.get('device_id')
+    
+    if device_id:
+        # 获取单个设备的路径
+        paths = load_device_paths(device_id)
+        return jsonify({device_id: paths})
+    else:
+        # 获取所有设备的路径
+        all_paths = {}
+        try:
+            for filename in os.listdir(DEVICE_PATHS_FOLDER):
+                if filename.endswith('_paths.json'):
+                    device_id = filename[:-11]  # 移除 '_paths.json'
+                    all_paths[device_id] = load_device_paths(device_id)
+        except Exception as e:
+            logging.error(f"Error loading device paths: {e}")
+            return jsonify({"error": str(e)}), 500
+        
+        return jsonify(all_paths)
+
+@app.route('/clear_device_paths', methods=['POST'])
+def clear_device_paths():
+    """清空指定设备的路径历史"""
+    try:
+        data = request.get_json()
+        device_id = data.get('device_id') if data else None
+        
+        if not device_id:
+            return jsonify({"error": "Missing device_id"}), 400
+        
+        device_path_file = os.path.join(DEVICE_PATHS_FOLDER, f'{device_id}_paths.json')
+        lock_path = device_path_file + '.lock'
+        
+        with FileLock(lock_path):
+            if os.path.exists(device_path_file):
+                os.remove(device_path_file)
+                logging.info(f"Cleared path history for device {device_id}")
+                return jsonify({"message": f"Path history cleared for device {device_id}"})
+            else:
+                return jsonify({"message": f"No path history found for device {device_id}"})
+                
+    except Exception as e:
+        logging.error(f"Error clearing device paths: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/inference_health', methods=['GET'])
 def get_inference_health():
