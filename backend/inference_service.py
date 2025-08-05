@@ -109,7 +109,6 @@ def wifi_inference(data):
         # Make prediction
         with torch.no_grad():
             predict_coors, _ = model(graph_dataset, input_weights)
-            embs = model.gen_emb(graph_dataset, input_weights)
             predict_coors = predict_coors * pos_range + pos_min
             predict = predict_coors.cpu().tolist()[0]  # Remove batch dimension
         return predict

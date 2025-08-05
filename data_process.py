@@ -15,6 +15,9 @@ from config import *
 
 logger = init_logger("data_process_logger", "data_process.log")
 
+# Global variable to store the current output directory
+CURRENT_OUTPUT_DIR = "output/jd_large_scale_test_all/data_process"
+
 def log_execution_time(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -141,11 +144,10 @@ def merge_yaw_step(yaws, step_counts, stride=0.5):
         start_waypoint = waypoints[-1]
     return np.array(waypoints)
 
-def process_wifi(wifi_file_path):
+def process_wifi(wifi_file_path, sampling_counter_path='output/data_process/sampling_counter.json'):
     logger.info("Processing wifi records")
     
-    # Create sampling counter file if it doesn't exist
-    sampling_counter_path = 'output/data_process/sampling_counter.json'
+    # Use provided sampling counter path
    
     with open(sampling_counter_path, 'r') as f:
         sampling_counter_dict = json.load(f)
@@ -262,7 +264,7 @@ def align_wifi_waypoint(wifi_records, waypoints):
                
 def read_waypoint(wifi_records):
     timestamp_records = {}
-    with open("./output/data_process/ap_unions.json", 'r') as f:
+    with open(os.path.join(CURRENT_OUTPUT_DIR, "ap_unions.json"), 'r') as f:
         ap_mapping = json.load(f)
     
     for i, record in enumerate(wifi_records):
@@ -469,6 +471,8 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
     # Process files
     euler_file = os.path.join(dir_path, 'euler.txt')
     step_file = os.path.join(dir_path, 'single_step_rec.txt')
+    # Note: This function is called from process_directory_for_steps_new_format
+    # which doesn't have access to output_dir, so we'll use the default path for now
     wifi_records = process_wifi(os.path.join(dir_path, 'wifi.txt'))
     
     euler = process_euler(euler_file)
@@ -582,64 +586,83 @@ def build_consecutive_step_dataset(dir_path, ap_unions, norm_params, verbose=Fal
     return wifi_inputs, distance_labels, waypoints
 
 @log_execution_time
-def process_directory_for_steps(dir_path, ap_unions, norm_params, verbose=False):
+def process_directory_for_steps_new_format(dir_path, ap_unions, norm_params, output_base_dir=None, verbose=False):
     """
-    Process all subdirectories in the given directory to build consecutive step dataset.
+    Process all device subdirectories in the given directory to build consecutive step dataset.
     
     Args:
-        dir_path (str): Path to parent directory containing subdirectories to process
+        dir_path (str): Path to parent directory containing device subdirectories to process
         ap_unions (dict): Dictionary mapping BSSIDs to their union IDs
         norm_params (dict): Dictionary containing normalization parameters
+        output_base_dir (str): Base output directory for saving pre-training data (default: "data")
         verbose (bool): Whether to print verbose output
         
     Returns:
         tuple: (wifi_inputs, distance_labels, farthest_points) containing combined data from all subdirs
     """
+    if output_base_dir is None:
+        output_base_dir = "data"
     wifi_inputs = []
     distance_labels = []
     farthest_points = []
     waypoints = []
     id_mask = []
-    # Get all subdirectories
-    subdirs = [d for d in os.listdir(dir_path) if os.path.isdir(os.path.join(dir_path, d))]
-    logger.info(f"Found {len(subdirs)} subdirectories to process")
+    
+    # Get all device directories
+    device_dirs = [d for d in os.listdir(dir_path) if os.path.isdir(os.path.join(dir_path, d))]
+    logger.info(f"Found {len(device_dirs)} device directories to process")
     trace_id_map = {}
     
-    for trace_id, subdir in enumerate(subdirs):
-        subdir_path = os.path.join(dir_path, subdir)
-        logger.info(f"Processing subdirectory: {subdir_path}")
+    trace_id = 0
+    for device_dir in device_dirs:
+        device_path = os.path.join(dir_path, device_dir)
+        device_id = device_dir
+        logger.info(f"Processing device: {device_id}")
         
-        # Process each subdirectory and collect the data
-        try:
-            subdir_wifi_inputs, subdir_distance_labels, subdir_waypoints = build_consecutive_step_dataset(
-                subdir_path, ap_unions, norm_params, verbose=verbose
-            )
-        except Exception as e:
-            logger.error(f"Error encountered when processing {subdir_path}, {e}")
-            continue
-        wifi_inputs.extend(subdir_wifi_inputs)
-        distance_labels.extend(subdir_distance_labels)
-        waypoints.extend(subdir_waypoints)
-        id_mask.extend([trace_id] * len(subdir_wifi_inputs))
-        trace_id_map[trace_id] = subdir
+        # Process each subdirectory in device folder
+        for subdir in os.listdir(device_path):
+            subdir_path = os.path.join(device_path, subdir)
+            if os.path.isdir(subdir_path):
+                logger.info(f"Processing subdirectory: {subdir_path}")
+                
+                # Process each subdirectory and collect the data
+                try:
+                    subdir_wifi_inputs, subdir_distance_labels, subdir_waypoints = build_consecutive_step_dataset(
+                        subdir_path, ap_unions, norm_params, verbose=verbose
+                    )
+                except Exception as e:
+                    logger.error(f"Error encountered when processing {subdir_path}, {e}")
+                    continue
+                
+                wifi_inputs.extend(subdir_wifi_inputs)
+                distance_labels.extend(subdir_distance_labels)
+                waypoints.extend(subdir_waypoints)
+                id_mask.extend([trace_id] * len(subdir_wifi_inputs))
+                trace_id_map[trace_id] = f"{device_id}_{subdir}"
+                trace_id += 1
+    
+    if not wifi_inputs:
+        logger.warning("No valid data found")
+        return [], [], []
+    
     # Convert lists to numpy arrays
     wifi_inputs_np = np.array([(w1.numpy(), w2.numpy()) for w1, w2 in wifi_inputs], dtype=np.float32)
     distance_labels_np = np.array(distance_labels, dtype=np.float32)
-    # farthest_points_np = np.array(farthest_points, dtype=np.float32)
     waypoints_np = np.array([np.array(waypoint) for waypoint in waypoints], dtype=np.float32)
     id_mask_np = np.array(id_mask, dtype=np.int32)
+    
     # Create output directory if it doesn't exist
-    os.makedirs("data/pre_training", exist_ok=True)
+    pre_training_dir = os.path.join(output_base_dir, "pre_training")
+    os.makedirs(pre_training_dir, exist_ok=True)
     
-    # Save arrays
-    np.save("data/pre_training/wifi_inputs.npy", wifi_inputs_np)
-    np.save("data/pre_training/distance_labels.npy", distance_labels_np)
-    np.save("data/pre_training/waypoints.npy", waypoints_np)
-    np.save("data/pre_training/id_mask.npy", id_mask_np)
-    json.dump(trace_id_map, open("data/pre_training/trace_id_map.json", 'w'))
-    # np.save("data/pre_training/farthest_points.npy", farthest_points_np)
+    # Save arrays to data-specific directory
+    np.save(os.path.join(pre_training_dir, "wifi_inputs.npy"), wifi_inputs_np)
+    np.save(os.path.join(pre_training_dir, "distance_labels.npy"), distance_labels_np)
+    np.save(os.path.join(pre_training_dir, "waypoints.npy"), waypoints_np)
+    np.save(os.path.join(pre_training_dir, "id_mask.npy"), id_mask_np)
+    json.dump(trace_id_map, open(os.path.join(pre_training_dir, "trace_id_map.json"), 'w'))
     
-    logger.info(f"Saved {len(wifi_inputs)} wifi input pairs, {len(distance_labels)} distance labels, and {len(farthest_points)} farthest points")
+    logger.info(f"Saved {len(wifi_inputs)} wifi input pairs, {len(distance_labels)} distance labels")
     return wifi_inputs, distance_labels, farthest_points
     
 
@@ -693,16 +716,20 @@ def merge_similar_aps(aps_dict):
     logger.info(f"Merged {len(aps_dict)} APs into {len(merged_aps)} unique APs")
     return merged_aps
 
-def create_ap_unions(merged_aps):
+def create_ap_unions(merged_aps, output_dir=None):
     """
     Create unions of similar APs with consecutive IDs.
     
     Args:
         merged_aps (dict): Dictionary of merged APs
+        output_dir (str): Output directory for saving processed data (default: "output/data_process")
         
     Returns:
         dict: Dictionary mapping each BSSID to its union ID
     """
+    if output_dir is None:
+        output_dir = "output/data_process"
+        
     logger.info("Creating AP unions with consecutive IDs")
     
     # Create a dictionary to store BSSID to union ID mapping
@@ -717,7 +744,6 @@ def create_ap_unions(merged_aps):
         union_id += 1
     
     # Save the union mapping
-    output_dir = "output/data_process"
     with open(os.path.join(output_dir, "ap_unions.json"), 'w') as f:
         json.dump(ap_unions, f, indent=4)
     
@@ -787,107 +813,257 @@ def record_distinct_aps(data_dir, valid_aps):
     return merged_aps, ap_unions
 
 @log_execution_time
-def process_waypoints(is_training: bool, data_path: str):
-    """Process waypoint data for either training or testing.
+def process_waypoints_new_format(data_path: str, output_base_dir: str = None):
+    """Process waypoint data with new folder format and auto-split into train/test.
     
     Args:
-        is_training (bool): True for training mode, False for testing mode
-        data_path (str): Path to the data directory containing waypoint data
+        data_path (str): Path to the data directory containing labeled and unlabeled folders
+        output_base_dir (str): Base output directory for saving train/test data (default: "data")
+        
+    Returns:
+        tuple: (training_coors, testing_coors) containing coordinates for train and test sets
     """
-    sub_dir = os.listdir(data_path)
+    if output_base_dir is None:
+        output_base_dir = "data"
+    labeled_path = os.path.join(data_path, "labeled")
+    unlabeled_path = os.path.join(data_path, "unlabeled")
     
-    # Set output directory based on mode
-    output_dir = "data/train_json" if is_training else "data/test_json"
+    if not os.path.exists(labeled_path):
+        logger.error(f"Labeled data directory not found: {labeled_path}")
+        return None, None
     
-    # Create output directory if it doesn't exist
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
-        
-    pattern = r'^\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)\s*$'
-    wifi_pattern  = r"(\d+)\s+(.*?)\s+([0-9a-fA-F:]+)\s+(\d+)\s+(-\d+)"
-    training_coors = []
-
-    for dir in sub_dir:
-        logger.info(f"Processing {dir}")
-        with open(f"{data_path}/{dir}/wifi.txt", 'r') as f:
-            all_records = f.readlines()
-            
-        start_coor_id = -1
-        last_timestamp = -1
-        single_trace_data = {}
-        
-        for i, record in enumerate(all_records):
-            if re.match(pattern, record):
-                coordinate_list = record.strip().split(',')
-                coordinate_tuple = (float(coordinate_list[0]), float(coordinate_list[1]))
-            elif re.match(wifi_pattern, record):
-                current_timestamp = int(record.split(' ')[0])
-                if start_coor_id == -1:
-                    start_coor_id = i
-                    last_timestamp = current_timestamp
-                if current_timestamp != last_timestamp:
-                    wifi_records = all_records[start_coor_id: i]
-                    try:
-                        bssid_rssi = read_waypoint(wifi_records)
-                        for k, v in bssid_rssi.items():
-                            single_trace_data[k] = v
-                    except Exception as e:
-                        # Extract waypoint number from directory name
-                        waypoint_num = dir.split('-')[1] if '-' in dir else dir
-                        logger.error(f"Error encountered when processing waypoint #{waypoint_num}, {e}")
-                    start_coor_id = i
-                    last_timestamp = current_timestamp
+    # Collect all device data
+    all_device_data = []
+    
+    # Process labeled data
+    if os.path.exists(labeled_path):
+        for device_dir in os.listdir(labeled_path):
+            device_path = os.path.join(labeled_path, device_dir)
+            if os.path.isdir(device_path):
+                device_id = device_dir
+                logger.info(f"Processing labeled device: {device_id}")
                 
-        # Save processed data
-        if single_trace_data:
-            with open(f"{output_dir}/{coordinate_tuple}.json", 'w') as f:
-                json.dump(single_trace_data, f)
-            training_coors.append(coordinate_tuple)
-    return torch.tensor(training_coors)
+                # Process each subdirectory in device folder
+                for subdir in os.listdir(device_path):
+                    subdir_path = os.path.join(device_path, subdir)
+                    if os.path.isdir(subdir_path):
+                        try:
+                            device_data = process_single_device_data(subdir_path, device_id)
+                            if device_data:
+                                all_device_data.extend(device_data)
+                        except Exception as e:
+                            logger.error(f"Error processing {subdir_path}: {e}")
+    
+    if not all_device_data:
+        logger.error("No valid data found")
+        return None, None
+    
+    # Split data into train/test (8:2 ratio)
+    np.random.shuffle(all_device_data)
+    split_idx = int(len(all_device_data) * 0.8)
+    train_data = all_device_data[:split_idx]
+    test_data = all_device_data[split_idx:]
+    
+    logger.info(f"Total data points: {len(all_device_data)}")
+    logger.info(f"Training data points: {len(train_data)}")
+    logger.info(f"Testing data points: {len(test_data)}")
+    
+    # Save training data to data-specific directory
+    train_output_dir = os.path.join(output_base_dir, "train_json")
+    if os.path.exists(train_output_dir):
+        shutil.rmtree(train_output_dir)
+    os.makedirs(train_output_dir)
+    
+    training_coors = []
+    for i, data_point in enumerate(train_data):
+        coord_tuple = (data_point['coordinates'][0], data_point['coordinates'][1])
+        filename = f"{coord_tuple[0]}_{coord_tuple[1]}_{data_point['device_id']}_{i}.json"
+        with open(os.path.join(train_output_dir, filename), 'w') as f:
+            json.dump(data_point, f, indent=2)
+        training_coors.append(data_point['coordinates'])
+    
+    # Save testing data to data-specific directory
+    test_output_dir = os.path.join(output_base_dir, "test_json")
+    if os.path.exists(test_output_dir):
+        shutil.rmtree(test_output_dir)
+    os.makedirs(test_output_dir)
+    
+    testing_coors = []
+    for i, data_point in enumerate(test_data):
+        coord_tuple = (data_point['coordinates'][0], data_point['coordinates'][1])
+        filename = f"{coord_tuple[0]}_{coord_tuple[1]}_{data_point['device_id']}_{i}.json"
+        with open(os.path.join(test_output_dir, filename), 'w') as f:
+            json.dump(data_point, f, indent=2)
+        testing_coors.append(data_point['coordinates'])
+    
+    return torch.tensor(training_coors), torch.tensor(testing_coors)
+
+def process_single_device_data(dir_path: str, device_id: str):
+    """Process data from a single device subdirectory.
+    
+    Args:
+        dir_path (str): Path to the device subdirectory
+        device_id (str): Device ID
+        
+    Returns:
+        list: List of processed data points
+    """
+    wifi_file = os.path.join(dir_path, 'wifi.txt')
+    if not os.path.exists(wifi_file):
+        return []
+    
+    with open(wifi_file, 'r') as f:
+        all_records = f.readlines()
+    
+    pattern = r'^\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)\s*$'
+    wifi_pattern = r"(\d+)\s+(.*?)\s+([0-9a-fA-F:]+)\s+(\d+)\s+(-\d+)"
+    
+    data_points = []
+    current_coordinates = None
+    start_coor_id = -1
+    last_timestamp = -1
+    wifi_records_buffer = []
+    
+    for i, record in enumerate(all_records):
+        if re.match(pattern, record):
+            # Found coordinates
+            coordinate_list = record.strip().split(',')
+            current_coordinates = (float(coordinate_list[0]), float(coordinate_list[1]))
+            
+        elif re.match(wifi_pattern, record):
+            # Found WiFi record
+            current_timestamp = int(record.split(' ')[0])
+            
+            if start_coor_id == -1:
+                start_coor_id = i
+                last_timestamp = current_timestamp
+            
+            if current_timestamp != last_timestamp:
+                # Process accumulated WiFi records
+                if wifi_records_buffer and current_coordinates:
+                    try:
+                        bssid_rssi = read_waypoint(wifi_records_buffer)
+                        data_point = {
+                            "device_id": device_id,
+                            "coordinates": current_coordinates,
+                            "records": bssid_rssi
+                        }
+                        data_points.append(data_point)
+                    except Exception as e:
+                        logger.error(f"Error processing WiFi records: {e}")
+                
+                # Reset for next batch
+                wifi_records_buffer = [record]
+                start_coor_id = i
+                last_timestamp = current_timestamp
+            else:
+                wifi_records_buffer.append(record)
+    
+    # Process final batch
+    if wifi_records_buffer and current_coordinates:
+        try:
+            bssid_rssi = read_waypoint(wifi_records_buffer)
+            data_point = {
+                "device_id": device_id,
+                "coordinates": current_coordinates,
+                "records": bssid_rssi
+            }
+            data_points.append(data_point)
+        except Exception as e:
+            logger.error(f"Error processing final WiFi records: {e}")
+    
+    return data_points
 
 @log_execution_time
-def process_all(unlabeled_dir_path):
+def process_all_new_format(data_path, output_dir=None):
     """
-    Process all unlabeled data and construct the AP graph.
+    Process unlabeled data with new folder format and construct the AP graph.
     
     Args:
-        unlabeled_dir_path (str): Path to the unlabeled data directory
+        data_path (str): Path to the data directory containing labeled and unlabeled folders
+        output_dir (str): Output directory for saving processed data (default: "output/data_process")
         
     Returns:
         int: Number of unique APs after merging
     """
-    logger.info(f"Processing {unlabeled_dir_path}")
-    sub_dir = os.listdir(unlabeled_dir_path)
-    for dir in sub_dir:
-        dir_path = os.path.join(unlabeled_dir_path, dir)
-        wifi_file = os.path.join(dir_path, 'wifi.txt')
-        process_wifi(wifi_file)
-    sampling_counter = json.load(open("output/data_process/sampling_counter.json", 'r'))
-    valid_aps = [bssid for bssid, (count, _, _) in sampling_counter["freq"].items() if count >= MINIMUM_SCANNING_TIMES] # minimum scanning tims
-    # First, record and merge all distinct APs
-    merged_aps, ap_unions = record_distinct_aps(unlabeled_dir_path, valid_aps)
+    if output_dir is None:
+        output_dir = "output/data_process"
+    
+    logger.info(f"Processing unlabeled data from {data_path}")
+    logger.info(f"Output directory: {output_dir}")
+    
+    # Only process unlabeled data for AP graph construction
+    unlabeled_path = os.path.join(data_path, "unlabeled")
+    
+    if not os.path.exists(unlabeled_path):
+        logger.error(f"Unlabeled data directory not found: {unlabeled_path}")
+        return None
+    
+    # Process all WiFi files for AP statistics
+    all_wifi_files = []
+    
+    # Define sampling counter path first
+    sampling_counter_path = os.path.join(output_dir, "sampling_counter.json")
+    
+    # Collect WiFi files from unlabeled data only
+    for device_dir in os.listdir(unlabeled_path):
+        device_path = os.path.join(unlabeled_path, device_dir)
+        if os.path.isdir(device_path):
+            for subdir in os.listdir(device_path):
+                subdir_path = os.path.join(device_path, subdir)
+                if os.path.isdir(subdir_path):
+                    wifi_file = os.path.join(subdir_path, 'wifi.txt')
+                    if os.path.exists(wifi_file):
+                        all_wifi_files.append(wifi_file)
+                        process_wifi(wifi_file, sampling_counter_path)
+    sampling_counter = json.load(open(sampling_counter_path, 'r'))
+    valid_aps = [bssid for bssid, (count, _, _) in sampling_counter["freq"].items() if count >= MINIMUM_SCANNING_TIMES]
+    
+    # First, record and merge all distinct APs from unlabeled data only
+    merged_aps, ap_unions = record_distinct_aps_unlabeled_only(unlabeled_path, valid_aps, output_dir)
     ap_num = len(merged_aps)
     
     # Initialize matrices for graph construction
     AP_dist_count = np.zeros((ap_num, ap_num))
     AP_dist = np.ones_like(AP_dist_count)
-    AP_dist_sq = np.zeros_like(AP_dist_count)  # For standard deviation calculation
-    waypoint_cnt = 0
-    wifi_cnt = 0
+    AP_dist_sq = np.zeros_like(AP_dist_count)
     rp_nums = 0
     
-    # Process each subdirectory
-    for dir in sub_dir:
-        dir_path = os.path.join(unlabeled_dir_path, dir)
+    # Process each WiFi file for graph construction
+    for wifi_file in all_wifi_files:
         try:
-            AP_dist_count, AP_dist, AP_dist_sq, tmp_rp = read_file_with_step_detector(dir_path, ap_unions, AP_dist_count, AP_dist, AP_dist_sq, valid_aps, verbose=True)
+            # Extract device and subdir info from path more reliably
+            # Path structure: data/JD_large_scale_test/unlabeled/device_id/subdir_name/wifi.txt
+            path_parts = wifi_file.split('/')
+            
+            # Find the indices for device_id and subdir_name
+            # Look for 'unlabeled' or 'labeled' to determine the structure
+            if 'unlabeled' in path_parts:
+                unlabeled_idx = path_parts.index('unlabeled')
+                device_id = path_parts[unlabeled_idx + 1]  # device folder name
+                subdir_name = path_parts[unlabeled_idx + 2]  # subdir folder name
+            elif 'labeled' in path_parts:
+                labeled_idx = path_parts.index('labeled')
+                device_id = path_parts[labeled_idx + 1]  # device folder name
+                subdir_name = path_parts[labeled_idx + 2]  # subdir folder name
+            else:
+                # Fallback to original logic
+                device_id = path_parts[-3]  # device folder name
+                subdir_name = path_parts[-2]  # subdir folder name
+            
+            logger.info(f"Processing device: {device_id}, subdir: {subdir_name}")
+            
+            # Create a temporary directory structure for processing
+            temp_dir = os.path.dirname(wifi_file)
+            
+            AP_dist_count, AP_dist, AP_dist_sq, tmp_rp = read_file_with_step_detector(
+                temp_dir, ap_unions, AP_dist_count, AP_dist, AP_dist_sq, valid_aps, verbose=False
+            )
             rp_nums += tmp_rp
         except Exception as e:
-            logger.error(f"Error encountered when processing {dir_path}, {e}")
+            logger.error(f"Error encountered when processing {wifi_file}, {e}")
     
     # Save the graph matrices
-    output_dir = "output/data_process"
     os.makedirs(output_dir, exist_ok=True)
     np.save(os.path.join(output_dir, "ap_dist_count.npy"), AP_dist_count)
     np.save(os.path.join(output_dir, "ap_dist.npy"), AP_dist)
@@ -895,7 +1071,6 @@ def process_all(unlabeled_dir_path):
     
     AP_dist_count[AP_dist_count == 0] = 1
     mean_dist = np.divide(AP_dist, AP_dist_count)
-    # Correct standard deviation calculation: sqrt(sum(x^2)/n - mean^2)
     std_dist = np.sqrt(np.divide(AP_dist_sq, AP_dist_count) - np.square(mean_dist))
     
     # Save statistics
@@ -904,8 +1079,151 @@ def process_all(unlabeled_dir_path):
     np.savetxt(os.path.join(output_dir, "ap_mean.txt"), mean_dist)
     np.savetxt(os.path.join(output_dir, "ap_std.txt"), std_dist)
     
-    logger.info(f"waypoint: {waypoint_cnt}, wifi: {wifi_cnt}, unlabeled rp: {rp_nums}")
+    logger.info(f"unlabeled rp: {rp_nums}")
     return ap_unions
+
+def record_distinct_aps_unlabeled_only(unlabeled_dir, valid_aps, output_dir=None):
+    """
+    Record all distinct Wi-Fi APs from unlabeled data only.
+    
+    Args:
+        unlabeled_dir (str): Directory containing the unlabeled data
+        valid_aps (set): Set of valid AP BSSIDs
+        output_dir (str): Output directory for saving processed data (default: "output/data_process")
+        
+    Returns:
+        tuple: (merged_aps, ap_unions) containing merged APs and union mappings
+    """
+    if output_dir is None:
+        output_dir = "output/data_process"
+        
+    logger.info("Recording distinct Wi-Fi APs from unlabeled data only")
+    distinct_aps = {}
+    
+    # Process unlabeled data only
+    if os.path.exists(unlabeled_dir):
+        for device_dir in os.listdir(unlabeled_dir):
+            device_path = os.path.join(unlabeled_dir, device_dir)
+            if os.path.isdir(device_path):
+                for subdir in os.listdir(device_path):
+                    subdir_path = os.path.join(device_path, subdir)
+                    if os.path.isdir(subdir_path):
+                        wifi_file = os.path.join(subdir_path, 'wifi.txt')
+                        if os.path.exists(wifi_file):
+                            process_wifi_file_for_aps(wifi_file, distinct_aps, valid_aps)
+    
+    # Merge similar APs
+    merged_aps = merge_similar_aps(distinct_aps)
+    
+    # Create AP unions
+    ap_unions = create_ap_unions(merged_aps, output_dir)
+    
+    # Save results to JSON files
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save original distinct APs
+    with open(os.path.join(output_dir, "distinct_aps.json"), 'w') as f:
+        json.dump(distinct_aps, f, indent=4)
+    
+    # Save merged APs
+    with open(os.path.join(output_dir, "merged_aps.json"), 'w') as f:
+        json.dump(merged_aps, f, indent=4)
+    
+    logger.info(f"Found {len(distinct_aps)} distinct APs from unlabeled data, merged into {len(merged_aps)} unique APs")
+    return merged_aps, ap_unions
+
+def record_distinct_aps_new_format(data_dir, valid_aps):
+    """
+    Record all distinct Wi-Fi APs from the new folder format.
+    
+    Args:
+        data_dir (str): Directory containing the labeled and unlabeled folders
+        valid_aps (set): Set of valid AP BSSIDs
+        
+    Returns:
+        tuple: (merged_aps, ap_unions) containing merged APs and union mappings
+    """
+    logger.info("Recording distinct Wi-Fi APs from new format")
+    distinct_aps = {}
+    
+    labeled_path = os.path.join(data_dir, "labeled")
+    unlabeled_path = os.path.join(data_dir, "unlabeled")
+    
+    # Process labeled data
+    if os.path.exists(labeled_path):
+        for device_dir in os.listdir(labeled_path):
+            device_path = os.path.join(labeled_path, device_dir)
+            if os.path.isdir(device_path):
+                for subdir in os.listdir(device_path):
+                    subdir_path = os.path.join(device_path, subdir)
+                    if os.path.isdir(subdir_path):
+                        wifi_file = os.path.join(subdir_path, 'wifi.txt')
+                        if os.path.exists(wifi_file):
+                            process_wifi_file_for_aps(wifi_file, distinct_aps, valid_aps)
+    
+    # Process unlabeled data
+    if os.path.exists(unlabeled_path):
+        for device_dir in os.listdir(unlabeled_path):
+            device_path = os.path.join(unlabeled_path, device_dir)
+            if os.path.isdir(device_path):
+                for subdir in os.listdir(device_path):
+                    subdir_path = os.path.join(device_path, subdir)
+                    if os.path.isdir(subdir_path):
+                        wifi_file = os.path.join(subdir_path, 'wifi.txt')
+                        if os.path.exists(wifi_file):
+                            process_wifi_file_for_aps(wifi_file, distinct_aps, valid_aps)
+    
+    # Merge similar APs
+    merged_aps = merge_similar_aps(distinct_aps)
+    
+    # Create AP unions
+    ap_unions = create_ap_unions(merged_aps)
+    
+    # Save results to JSON files
+    output_dir = "output/data_process"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save original distinct APs
+    with open(os.path.join(output_dir, "distinct_aps.json"), 'w') as f:
+        json.dump(distinct_aps, f, indent=4)
+    
+    # Save merged APs
+    with open(os.path.join(output_dir, "merged_aps.json"), 'w') as f:
+        json.dump(merged_aps, f, indent=4)
+    
+    logger.info(f"Found {len(distinct_aps)} distinct APs, merged into {len(merged_aps)} unique APs")
+    return merged_aps, ap_unions
+
+def process_wifi_file_for_aps(wifi_file, distinct_aps, valid_aps):
+    """Process a single WiFi file to extract AP information.
+    
+    Args:
+        wifi_file (str): Path to WiFi file
+        distinct_aps (dict): Dictionary to store distinct APs
+        valid_aps (set): Set of valid AP BSSIDs
+    """
+    with open(wifi_file) as f:
+        wifi_records = f.readlines()
+        
+    for record in wifi_records:
+        pattern = r"(\d+)\s+(.*?)\s+([0-9a-fA-F:]+)\s+(\d+)\s+(-\d+)"
+        match = re.match(pattern, record)
+        if match:
+            bssid = match.group(3)
+            freq = int(match.group(4))
+            rssi = int(match.group(5))
+            ssid = match.group(2)
+            
+            if rssi > FILTER_THRESHOLD and bssid in valid_aps:
+                if bssid not in distinct_aps:
+                    distinct_aps[bssid] = {
+                        'ssid': ssid,
+                        'frequency': freq,
+                        'band': '5G' if freq > 5000 else '2.4G',
+                        'count': 1
+                    }
+                else:
+                    distinct_aps[bssid]['count'] += 1
 
 def plot_ap_mean_heatmap(output_dir="output/data_process"):
     """
@@ -925,10 +1243,27 @@ def plot_ap_mean_heatmap(output_dir="output/data_process"):
 if __name__ == "__main__":
     start_time = time.time()
     
-    # Add the new function call
-    # merged_aps, ap_unions = record_distinct_aps("data/WiMU data/unlabeled_data")
-    sampling_counter_path = 'output/data_process/sampling_counter.json'
-    # if not os.path.exists(sampling_counter_path):
+    # Process data with new format
+    data_path = "data/JD_langfang_large_scale/JD_langfang_all"
+    
+    # Extract dataset name from data path for output directory
+    data_name = os.path.basename(data_path.rstrip('/'))
+    if not data_name:
+        data_name = "default_dataset"
+    
+    # Create data-specific output directory
+    output_base_dir = f"output_{data_name}"
+    output_data_process_dir = os.path.join(output_base_dir, "data_process")
+    
+    # Set global output directory
+    CURRENT_OUTPUT_DIR = output_data_process_dir
+    
+    print(f"处理数据集: {data_name}")
+    print(f"数据路径: {data_path}")
+    print(f"输出目录: {output_base_dir}")
+    
+    # Initialize sampling counter with data-specific path
+    sampling_counter_path = os.path.join(output_data_process_dir, 'sampling_counter.json')
     sampling_counter_dict = {
         "counted": [],
         "freq": {}
@@ -937,15 +1272,32 @@ if __name__ == "__main__":
     with open(sampling_counter_path, 'w') as f:
         json.dump(sampling_counter_dict, f, indent=4)
     
-    ap_unions = process_all("data/JD_large_scale_test/unlabeled")
-    training_coors = process_waypoints(is_training=True, data_path="data/JD_large_scale_test/train")
-    testing_coors = process_waypoints(is_training=False, data_path="data/JD_large_scale_test/test")
-    training_pos_range = torch.max(training_coors, dim=0)[0] - torch.min(training_coors, dim=0)[0]
-    # training_pos_range = torch.tensor([20.6, 81])
-    training_pos_min = torch.min(training_coors, dim=0)[0]
-    # training_pos_min = torch.tensor([8.4, -33])
-    process_directory_for_steps("data/JD_large_scale_test/unlabeled", ap_unions, {"pos_range": training_pos_range.numpy(), "pos_min": training_pos_min.numpy()})
+    # Process all data and build AP graph
+    ap_unions = process_all_new_format(data_path, output_data_process_dir)
+    
+    # Process waypoints with new format and auto-split
+    training_coors, testing_coors = process_waypoints_new_format(data_path, output_base_dir)
+    
+    if training_coors is not None and testing_coors is not None:
+        # Calculate normalization parameters from training data
+        training_pos_range = torch.max(training_coors, dim=0)[0] - torch.min(training_coors, dim=0)[0]
+        training_pos_min = torch.min(training_coors, dim=0)[0]
+        
+        # Save normalization parameters to data-specific directory
+        norm_params = {
+            "pos_range": training_pos_range.numpy(),
+            "pos_min": training_pos_min.numpy()
+        }
+        
+        # Save norm params for later use
+        torch.save(norm_params, os.path.join(output_base_dir, "norm_params.pt"))
+        
+        # Process unlabeled data for consecutive steps
+        unlabeled_path = os.path.join(data_path, "unlabeled")
+        if os.path.exists(unlabeled_path):
+            process_directory_for_steps_new_format(unlabeled_path, ap_unions, norm_params, output_base_dir)
+    
     end_time = time.time()
     total_time = end_time - start_time
     logger.info(f"Total execution time: {total_time:.2f} seconds")
-    # plot_ap_mean_heatmap()
+    logger.info(f"结果已保存到: {output_base_dir}")

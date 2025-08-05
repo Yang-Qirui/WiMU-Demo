@@ -17,8 +17,8 @@ import re
 # EMQX HTTP API
 EMQX_HOST = "127.0.0.1"
 EMQX_API_PORT = 18083
-EMQX_API_USER = "2cff38a527697f0c"
-EMQX_API_PASS = "Fps3QsPuqD4BdiDJJsC5dIXO3d9Bzy7E3FAXNgJkbZpJ"
+EMQX_API_USER = "df2d2abef4f017f0"
+EMQX_API_PASS = "PtKM1cA9Cnrd9BSXwsXSlO0tVnTTdDM79A37M0uTBtHoDO"
 EMQX_API_URL = f"http://{EMQX_HOST}:{EMQX_API_PORT}"
 EMQX_CREATE_USER_ENDPOINT = f"{EMQX_API_URL}/api/v5/authentication/password_based%3Abuilt_in_database/users"
 
@@ -324,6 +324,7 @@ def get_devices():
     devices = get_all_connected_device_ids()
     names = load_device_names()
     result = []
+    print(devices)
     for device_id in devices:
         result.append({
             "deviceId": device_id,

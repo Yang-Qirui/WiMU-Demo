@@ -44,3 +44,11 @@ Thumbs.db
 *.db
 
 frontend/node_modules/
+
+output_*/
+
+wandb/
+
+*/cache/
+
+*/data_json/

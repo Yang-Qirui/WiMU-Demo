@@ -149,7 +149,7 @@ def prune_adjacency_topk_min(A_orig, k=5):
 
     return A_pruned
 
-def plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses, val_dist_losses, train_l1_losses, val_l1_losses):
+def plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses, val_dist_losses):
     """
     Plot the training and validation losses during pre-training
     """
@@ -173,15 +173,6 @@ def plot_pretrain_losses(train_recon_losses, train_dist_losses, val_recon_losses
     plt.title('Distance Loss vs Epoch')
     plt.legend()
     
-    # Plot contrast losses
-    plt.subplot(1, 3, 3)
-    plt.plot(train_l1_losses, label='Train L1 Regularization Loss')
-    plt.plot(val_l1_losses, label='Validation L1 Regularization Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('L1 Regularization Loss vs Epoch')
-    plt.legend()
-    
     plt.tight_layout()
     plt.savefig('output/pre_train_plots/training_curves.png')
     plt.close()
@@ -203,20 +194,30 @@ def plot_adjacency_matrices(original_A, recon_A):
     plt.savefig('output/pre_train_adjacency/adjacency_comparison.png')
     plt.close()
 
-def plot_fine_tune_losses(train_losses, test_errors):
-    plt.figure(figsize=(10, 5))
-    plt.subplot(1, 2, 1)
+def plot_fine_tune_losses(train_losses, val_losses, test_errors):
+    plt.figure(figsize=(15, 5))
+    plt.subplot(1, 3, 1)
     plt.plot(train_losses, label='Training Loss')
+    plt.plot(val_losses, label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Training Loss vs Epoch')
+    plt.title('Training and Validation Loss vs Epoch')
     plt.legend()
     
-    plt.subplot(1, 2, 2)
+    plt.subplot(1, 3, 2)
     plt.plot(test_errors, label='Test Error')
     plt.xlabel('Epoch')
     plt.ylabel('Error')
     plt.title('Test Error vs Epoch')
+    plt.legend()
+    
+    plt.subplot(1, 3, 3)
+    plt.plot(train_losses, label='Training Loss', alpha=0.7)
+    plt.plot(val_losses, label='Validation Loss', alpha=0.7)
+    plt.plot(test_errors, label='Test Error', alpha=0.7)
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss/Error')
+    plt.title('All Metrics vs Epoch')
     plt.legend()
     
     plt.tight_layout()
