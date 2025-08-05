@@ -24,21 +24,21 @@ LDPL_MODE = 'jd'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load graph dataset
-graph_dataset = torch.load("./params/graph_dataset.pt", weights_only=False).to(device)
+graph_dataset = torch.load("./params/all/graph_dataset.pt", weights_only=False).to(device)
 # Initialize models
 gnn = GAE(GCNEncoder(128, 128), MLPDecoder(128)).to(device)
 mlp = MyMLP(128, 2).float().to(device)
 model = JointModel(gnn, mlp).to(device)
-model.load_state_dict(torch.load('./params/fine_tuned_model.pt'))
+model.load_state_dict(torch.load('./params/all/fine_tuned_model.pt'))
 model.eval()
 
 # Load normalization parameters
-norm_params = torch.load('./params/norm_params.pt')
+norm_params = torch.load('./params/all/norm_params.pt')
 pos_range = norm_params['pos_range'].to(device)
 pos_min = norm_params['pos_min'].to(device)
 
 # Load AP mapping
-with open("./params/ap_unions.json", 'r') as f:
+with open("./params/all/ap_unions.json", 'r') as f:
     ap_mapping = json.load(f)
 
 # 设备粒子滤波器管理
